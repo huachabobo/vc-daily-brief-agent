@@ -7,6 +7,7 @@ from typing import Dict, List
 import yaml
 
 from vc_agent.briefing import build_daily_brief, select_brief_items
+from vc_agent.connectors.rss import RSSConnector
 from vc_agent.connectors.youtube import YouTubeConnector
 from vc_agent.delivery.feishu import FeishuNotifier
 from vc_agent.domain import Item, SourceConfig
@@ -40,19 +41,16 @@ def run(settings: Settings) -> Dict[str, object]:
 
     sources = load_sources(settings.sources_config)
     profile = load_user_profile(settings.user_profile_config)
-    connector = YouTubeConnector(
-        api_key=settings.youtube_api_key,
-        max_fetch_per_source=settings.max_fetch_per_source,
-    )
+    connectors = build_connectors(settings)
 
     primary_since = hours_ago(settings.lookback_hours)
     fallback_since = hours_ago(settings.fallback_lookback_hours)
 
-    fetched_raw_items = connector.fetch_since(sources, primary_since.isoformat())
+    fetched_raw_items = fetch_raw_items(connectors, sources, primary_since.isoformat())
     used_fallback = False
     if not fetched_raw_items:
-        LOGGER.info("主时间窗没有新视频，自动放宽 lookback 到 %s 小时。", settings.fallback_lookback_hours)
-        fetched_raw_items = connector.fetch_since(sources, fallback_since.isoformat())
+        LOGGER.info("主时间窗没有新内容，自动放宽 lookback 到 %s 小时。", settings.fallback_lookback_hours)
+        fetched_raw_items = fetch_raw_items(connectors, sources, fallback_since.isoformat())
         used_fallback = True
 
     source_map = {source.name: source for source in sources}
@@ -134,16 +132,48 @@ def load_sources(path: Path) -> List[SourceConfig]:
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     sources = []
     for entry in payload.get("sources", []):
+        platform = (entry.get("platform", "youtube") or "youtube").strip().lower()
         sources.append(
             SourceConfig(
                 name=entry["name"],
-                channel_id=entry["channel_id"],
+                platform=platform,
+                channel_id=entry.get("channel_id"),
+                feed_url=entry.get("feed_url"),
                 seed_weight=float(entry.get("seed_weight", 1.0)),
                 topics=list(entry.get("topics", [])),
                 active=bool(entry.get("active", True)),
             )
         )
     return sources
+
+
+def build_connectors(settings: Settings):
+    return {
+        "youtube": YouTubeConnector(
+            api_key=settings.youtube_api_key,
+            max_fetch_per_source=settings.max_fetch_per_source,
+        ),
+        "rss": RSSConnector(max_fetch_per_source=settings.max_fetch_per_source),
+    }
+
+
+def fetch_raw_items(connectors, sources: List[SourceConfig], since_iso: str):
+    active_sources = [source for source in sources if source.active]
+    if not active_sources:
+        raise ValueError("config/sources.yaml 中没有 active=true 的内容源。")
+
+    sources_by_platform: Dict[str, List[SourceConfig]] = {}
+    for source in active_sources:
+        sources_by_platform.setdefault(source.platform, []).append(source)
+
+    collected = []
+    for platform, platform_sources in sources_by_platform.items():
+        connector = connectors.get(platform)
+        if connector is None:
+            LOGGER.warning("跳过不支持的平台: %s", platform)
+            continue
+        collected.extend(connector.fetch_since(platform_sources, since_iso))
+    return collected
 
 
 def normalize_raw_item(raw_item_id: int, raw_item, source_config: SourceConfig = None) -> Item:

@@ -6,6 +6,7 @@
 
 - `今日变化`：日报不会只堆内容，还会总结今天相比常规观察窗口最值得先看的变化
 - `Why selected`：每条内容都会说明为什么它被选进今日简报，强化可解释性
+- `多真实源`：当前同时接入 `YouTube` 与 `RSS/Atom`，避免只靠单一平台
 - `飞书反馈学习`：用户点击 `👍 / 👎` 后，source/topic/phrase 权重会影响下一轮排序
 - `显式用户画像`：可以在 `config/user_profile.yaml` 里直接声明重点赛道、偏好来源和屏蔽条件
 - `轻量配置向导`：`python scripts/bootstrap.py` 可以在终端里生成 `.env`，不需要额外做 WebUI
@@ -18,7 +19,7 @@
 
 ## 当前原型范围
 
-- 真实接入 `YouTube Data API`
+- 真实接入 `YouTube Data API` 与 `RSS/Atom feed`
 - 基于规则做冷启动过滤、排序和去重
 - 调用 OpenAI 兼容接口生成结构化摘要，失败时降级为抽取式摘要
 - 输出 Markdown 简报到 `sample_output/`
@@ -29,11 +30,11 @@
 ## 架构概览
 
 ```text
-YouTube -> Raw Store(SQLite) -> Normalize/Dedup -> Rank -> LLM Summary
-        -> Brief Composer -> Markdown / Feishu
-                             ^
-                             |
-                  Feedback / Long Connection
+YouTube / RSS -> Raw Store(SQLite) -> Normalize/Dedup -> Rank -> LLM Summary
+                                -> Brief Composer -> Markdown / Feishu
+                                                     ^
+                                                     |
+                                          Feedback / Long Connection
 ```
 
 ## 目录结构
@@ -95,7 +96,11 @@ python scripts/bootstrap.py
 
 3. 配置内容源
 
-编辑 [config/sources.yaml](config/sources.yaml)，填入 YouTube 频道 `channel_id`，并把 `active` 改成 `true`。
+编辑 [config/sources.yaml](config/sources.yaml)：
+- `platform: youtube` 时填写 `channel_id`
+- `platform: rss` 时填写 `feed_url`
+
+默认示例里已经带了 4 个 YouTube 白名单频道和 3 个 RSS 高信号源。
 
 4. 可选：配置用户画像
 
@@ -116,7 +121,7 @@ python scripts/run_once.py
 ```
 
 成功后会：
-- 抓取 YouTube 内容
+- 抓取 YouTube / RSS 内容
 - 把原始数据和分析结果写入 `data/vc_agent.db`
 - 在 `sample_output/` 生成日报
 - 若配置了飞书，自动尝试发送
@@ -201,7 +206,7 @@ pytest
 
 ## 已知限制
 
-- 原型只真实接入 YouTube，X 与公众号在设计文档中给出扩展方案
+- 原型已真实接入 YouTube 与 RSS，X 与公众号在设计文档中给出扩展方案
 - 去重只做 `videoId` 和标题近似，不做跨平台语义聚类
 - 飞书长连接只支持企业自建应用，当前接的是新版 `card.action.trigger`
 - 若切回 HTTP 回调并开启额外加密策略，需要补充解密逻辑

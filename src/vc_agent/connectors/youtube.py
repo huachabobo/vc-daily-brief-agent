@@ -31,6 +31,8 @@ class YouTubeConnector:
             raise ValueError("config/sources.yaml 中没有 active=true 的 YouTube 频道。")
 
         for source in active_sources:
+            if not source.channel_id:
+                raise ValueError("YouTube source 缺少 channel_id: {0}".format(source.name))
             metadata = self._fetch_channel_metadata(source.channel_id)
             playlist_id = metadata["contentDetails"]["relatedPlaylists"]["uploads"]
             source_name = metadata["snippet"]["title"]

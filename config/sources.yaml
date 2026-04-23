@@ -1,24 +1,49 @@
 sources:
   - name: "AI Explained"
+    platform: "youtube"
     channel_id: "UCNJ1Ymd5yFuUPtn21xtRbbw"
     seed_weight: 1.2
     topics: ["AI"]
     active: true
 
   - name: "Asianometry"
+    platform: "youtube"
     channel_id: "UC1LpsuAUaKoMzzJSEt5WImw"
     seed_weight: 1.1
     topics: ["芯片"]
     active: true
 
   - name: "NVIDIA"
+    platform: "youtube"
     channel_id: "UCHuiy8bXnmK5nisYHUd1J5g"
     seed_weight: 1.15
     topics: ["芯片", "AI"]
     active: true
 
   - name: "Agility"
+    platform: "youtube"
     channel_id: "UCN-StetwWuVYf-MU2_NVj4A"
     seed_weight: 1.1
+    topics: ["机器人"]
+    active: true
+
+  - name: "TechCrunch AI"
+    platform: "rss"
+    feed_url: "https://techcrunch.com/category/artificial-intelligence/feed/"
+    seed_weight: 1.0
+    topics: ["AI"]
+    active: true
+
+  - name: "SemiEngineering"
+    platform: "rss"
+    feed_url: "https://semiengineering.com/feed/"
+    seed_weight: 1.05
+    topics: ["芯片"]
+    active: true
+
+  - name: "The Robot Report"
+    platform: "rss"
+    feed_url: "https://www.therobotreport.com/feed/"
+    seed_weight: 1.0
     topics: ["机器人"]
     active: true

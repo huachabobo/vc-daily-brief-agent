@@ -8,7 +8,9 @@ from typing import Any, Dict, List, Optional
 @dataclass
 class SourceConfig:
     name: str
-    channel_id: str
+    platform: str = "youtube"
+    channel_id: Optional[str] = None
+    feed_url: Optional[str] = None
     seed_weight: float = 1.0
     topics: List[str] = field(default_factory=list)
     active: bool = True
