@@ -29,6 +29,13 @@ class PreferenceMessageResult:
     should_reply: bool
     reply_text: str
     updated: bool = False
+    reply_card: Optional[dict] = None
+
+
+@dataclass
+class PreferenceCardActionResult:
+    toast_content: str
+    reply_text: Optional[str] = None
 
 
 def handle_preference_message(settings: Settings, body: Dict[str, Any]) -> PreferenceMessageResult:
@@ -156,10 +163,73 @@ def handle_preference_message(settings: Settings, body: Dict[str, Any]) -> Prefe
             patch=compiled.patch,
         )
     )
+    preview_text = compose_preview_reply(settings, text, compiled, current_profile)
     return PreferenceMessageResult(
         should_reply=True,
-        reply_text=compose_preview_reply(settings, text, compiled, current_profile),
+        reply_text=preview_text,
+        reply_card=build_preview_card(preview_text),
     )
+
+
+def handle_preference_card_action(settings: Settings, body: Dict[str, Any]) -> PreferenceCardActionResult:
+    action = _extract_card_action(body)
+    operator_open_id = _extract_operator_open_id(body)
+    if not operator_open_id:
+        return PreferenceCardActionResult(toast_content="没有识别到当前操作者，暂时无法执行。")
+
+    state_store = PreferenceAssistantStateStore(_assistant_state_path(settings))
+
+    if action == "confirm_pending":
+        pending = state_store.get_pending(operator_open_id)
+        if pending is None:
+            return PreferenceCardActionResult(
+                toast_content="当前没有待确认的偏好修改。",
+                reply_text="我这边没有待确认的偏好修改。你可以先发一条新的偏好描述，我会先给你预览。",
+            )
+        current_profile = load_user_profile(settings.user_profile_config)
+        state_store.append_history(
+            operator_open_id,
+            PreferenceHistoryEntry(
+                previous_profile=current_profile,
+                user_text=pending.user_text,
+                mode=pending.mode,
+            ),
+        )
+        updated_profile = merge_profile_patch(current_profile, pending.patch)
+        save_user_profile(settings.user_profile_config, updated_profile)
+        state_store.clear_pending(operator_open_id)
+        return PreferenceCardActionResult(
+            toast_content="偏好已更新",
+            reply_text=compose_update_reply(
+                settings,
+                pending.user_text,
+                CompiledPreference(mode=pending.mode, patch=pending.patch),
+                updated_profile,
+            ),
+        )
+
+    if action == "cancel_pending":
+        pending = state_store.get_pending(operator_open_id)
+        if pending is None:
+            return PreferenceCardActionResult(
+                toast_content="没有待取消的修改。",
+                reply_text="当前没有待确认的偏好修改。你可以直接发新的偏好描述，或者发“查看当前偏好”。",
+            )
+        state_store.clear_pending(operator_open_id)
+        return PreferenceCardActionResult(
+            toast_content="已取消这次修改",
+            reply_text="好的，这次预览我先取消，不会改你的推荐偏好。想继续的话，随时再发一条新的偏好描述就行。",
+        )
+
+    if action == "show_profile":
+        profile = load_user_profile(settings.user_profile_config)
+        pending = state_store.get_pending(operator_open_id)
+        return PreferenceCardActionResult(
+            toast_content="已发送当前偏好",
+            reply_text=compose_profile_summary_reply(settings, profile, pending=pending),
+        )
+
+    return PreferenceCardActionResult(toast_content="暂不支持这个按钮动作。")
 
 
 def compose_update_reply(settings: Settings, user_text: str, compiled: CompiledPreference, updated_profile: UserProfile) -> str:
@@ -346,6 +416,45 @@ def _render_undo_reply(restored_profile: UserProfile) -> str:
     )
 
 
+def build_preview_card(preview_text: str) -> dict:
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "wathet",
+            "title": {"tag": "plain_text", "content": "偏好更新预览"},
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "text": {"tag": "lark_md", "content": preview_text.replace("\n", "\n\n")},
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "确认应用"},
+                        "type": "primary",
+                        "value": {"assistant_action": "confirm_pending"},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "取消"},
+                        "type": "default",
+                        "value": {"assistant_action": "cancel_pending"},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看当前偏好"},
+                        "type": "default",
+                        "value": {"assistant_action": "show_profile"},
+                    },
+                ],
+            },
+        ],
+    }
+
+
 def _compiled_patch_payload(patch) -> dict:
     return {
         "add_focus_topics": patch.add_focus_topics,
@@ -399,6 +508,17 @@ def _extract_user_key(body: Dict[str, Any]) -> str:
         if value:
             return str(value)
     return ""
+
+
+def _extract_operator_open_id(body: Dict[str, Any]) -> str:
+    return str(body.get("event", {}).get("operator", {}).get("open_id") or "")
+
+
+def _extract_card_action(body: Dict[str, Any]) -> str:
+    value = body.get("event", {}).get("action", {}).get("value", {})
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("assistant_action") or "")
 
 
 def _extract_text_message(body: Dict[str, Any]) -> str:

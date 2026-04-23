@@ -118,6 +118,34 @@ class FeishuNotifier:
         if not self.settings.feishu_app_id or not self.settings.feishu_app_secret:
             raise RuntimeError("飞书文本回复需要 FEISHU_APP_ID 和 FEISHU_APP_SECRET。")
         token = self._tenant_access_token()
+        return self._send_app_message(
+            token=token,
+            receive_id_type=receive_id_type,
+            receive_id=receive_id,
+            msg_type="text",
+            content={"text": text},
+        )
+
+    def send_interactive_message(self, receive_id_type: str, receive_id: str, card: dict) -> DeliveryResult:
+        if not self.settings.feishu_app_id or not self.settings.feishu_app_secret:
+            raise RuntimeError("飞书卡片回复需要 FEISHU_APP_ID 和 FEISHU_APP_SECRET。")
+        token = self._tenant_access_token()
+        return self._send_app_message(
+            token=token,
+            receive_id_type=receive_id_type,
+            receive_id=receive_id,
+            msg_type="interactive",
+            content=card,
+        )
+
+    def _send_app_message(
+        self,
+        token: str,
+        receive_id_type: str,
+        receive_id: str,
+        msg_type: str,
+        content: dict,
+    ) -> DeliveryResult:
         response = self.session.post(
             "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={0}".format(receive_id_type),
             headers={
@@ -126,15 +154,15 @@ class FeishuNotifier:
             },
             json={
                 "receive_id": receive_id,
-                "msg_type": "text",
-                "content": json.dumps({"text": text}, ensure_ascii=False),
+                "msg_type": msg_type,
+                "content": json.dumps(content, ensure_ascii=False),
             },
             timeout=30,
         )
         response.raise_for_status()
         body = response.json()
         if body.get("code") not in (None, 0):
-            raise RuntimeError(body.get("msg", "feishu app text send failed"))
+            raise RuntimeError(body.get("msg", "feishu app send failed"))
         message_id = None
         data = body.get("data") or {}
         if isinstance(data, dict):

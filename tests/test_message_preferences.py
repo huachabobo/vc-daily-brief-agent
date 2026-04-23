@@ -2,7 +2,11 @@ from pathlib import Path
 
 import yaml
 
-from vc_agent.feedback.message_preferences import compose_update_reply, handle_preference_message
+from vc_agent.feedback.message_preferences import (
+    compose_update_reply,
+    handle_preference_card_action,
+    handle_preference_message,
+)
 from vc_agent.profile import UserProfilePatch
 from vc_agent.profile_nlp import CompiledPreference
 from vc_agent.settings import Settings
@@ -66,6 +70,8 @@ def test_preference_message_creates_pending_preview(tmp_path):
     assert result.should_reply is True
     assert result.updated is False
     assert "确认应用" in result.reply_text
+    assert result.reply_card is not None
+    assert result.reply_card["header"]["title"]["content"] == "偏好更新预览"
 
     saved = yaml.safe_load((root / "config" / "user_profile.yaml").read_text(encoding="utf-8"))
     assert saved["focus_topics"] == []
@@ -83,6 +89,33 @@ def test_confirm_message_applies_pending_update(tmp_path):
 
     assert result.should_reply is True
     assert result.updated is True
+
+    saved = yaml.safe_load((root / "config" / "user_profile.yaml").read_text(encoding="utf-8"))
+    assert "AI" in saved["focus_topics"]
+    assert "NVIDIA" in saved["preferred_sources"]
+    assert saved["digest"]["max_items"] == 5
+
+
+def test_confirm_card_action_applies_pending_update(tmp_path):
+    root = Path(tmp_path)
+    settings = _setup_repo(root)
+
+    handle_preference_message(
+        settings,
+        _make_body("更关注 AI 和机器人，优先 NVIDIA、SemiEngineering，少给我 benchmark，日报控制在 5 条"),
+    )
+    result = handle_preference_card_action(
+        settings,
+        {
+            "event": {
+                "operator": {"open_id": "ou_test_user"},
+                "action": {"value": {"assistant_action": "confirm_pending"}},
+            }
+        },
+    )
+
+    assert result.toast_content == "偏好已更新"
+    assert result.reply_text
 
     saved = yaml.safe_load((root / "config" / "user_profile.yaml").read_text(encoding="utf-8"))
     assert "AI" in saved["focus_topics"]

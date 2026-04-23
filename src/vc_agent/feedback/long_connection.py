@@ -5,7 +5,10 @@ import logging
 from typing import Any
 
 from vc_agent.delivery.feishu import FeishuNotifier
-from vc_agent.feedback.message_preferences import handle_preference_message
+from vc_agent.feedback.message_preferences import (
+    handle_preference_card_action,
+    handle_preference_message,
+)
 from vc_agent.feedback.processing import (
     FeedbackNotFoundError,
     FeedbackValidationError,
@@ -41,6 +44,30 @@ def serve_long_connection(settings: Settings) -> None:
     def do_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
         body = json.loads(lark.JSON.marshal(data))
         LOGGER.info("收到飞书长连接卡片交互回调。")
+        if _has_preference_assistant_action(body):
+            try:
+                result = handle_preference_card_action(settings, body)
+                operator_open_id = _extract_operator_open_id(body)
+                if result.reply_text and operator_open_id:
+                    notifier.send_text_message("open_id", operator_open_id, result.reply_text)
+                return P2CardActionTriggerResponse(
+                    {
+                        "toast": {
+                            "type": "success",
+                            "content": result.toast_content,
+                        }
+                    }
+                )
+            except Exception:
+                LOGGER.exception("飞书长连接处理偏好助手按钮失败。")
+                return P2CardActionTriggerResponse(
+                    {
+                        "toast": {
+                            "type": "danger",
+                            "content": "偏好修改暂时处理失败，请稍后再试。",
+                        }
+                    }
+                )
         try:
             result = handle_feedback_payload(repo, body, source_hint="feishu_long_connection")
             return P2CardActionTriggerResponse(result.as_feishu_response())
@@ -86,6 +113,9 @@ def serve_long_connection(settings: Settings) -> None:
             chat_id = _extract_chat_id(body)
             if not chat_id:
                 LOGGER.warning("飞书消息缺少 chat_id，无法回复。body=%s", body)
+                return
+            if result.reply_card:
+                notifier.send_interactive_message("chat_id", chat_id, result.reply_card)
                 return
             notifier.send_text_message("chat_id", chat_id, result.reply_text)
         except Exception:
@@ -133,3 +163,14 @@ def _safe_message_preview(data: Any) -> str:
 
 def _extract_chat_id(body: dict[str, Any]) -> str:
     return str(body.get("event", {}).get("message", {}).get("chat_id") or "")
+
+
+def _extract_operator_open_id(body: dict[str, Any]) -> str:
+    return str(body.get("event", {}).get("operator", {}).get("open_id") or "")
+
+
+def _has_preference_assistant_action(body: dict[str, Any]) -> bool:
+    value = body.get("event", {}).get("action", {}).get("value", {})
+    if not isinstance(value, dict):
+        return False
+    return bool(value.get("assistant_action"))
