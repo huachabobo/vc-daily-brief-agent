@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import requests
 
 from vc_agent.delivery_preferences import (
+    DAY_CODES,
+    WEEKEND_CODES,
+    WORKDAY_CODES,
+    DeliverySchedule,
     DeliveryPreferences,
     load_delivery_preferences,
     render_delivery_preferences,
@@ -33,7 +37,7 @@ class CompiledDeliveryRequest:
     generate_now: bool = False
     show_schedule: bool = False
     enabled: Optional[bool] = None
-    daily_time: Optional[str] = None
+    schedules: list[DeliverySchedule] = field(default_factory=list)
     rationale: str = ""
 
 
@@ -70,10 +74,11 @@ def handle_schedule_message(settings: Settings, body: dict[str, Any]) -> Schedul
             reply_text="好的，我先暂停每日自动推送。之后如果你想恢复，直接发“每天早上 8 点推送日报”之类的话就行。",
         )
 
-    if compiled.daily_time or compiled.enabled is True:
+    if compiled.schedules or compiled.enabled is True:
         preferences.enabled = True if compiled.enabled is None else compiled.enabled
-        if compiled.daily_time:
-            preferences.daily_time = compiled.daily_time
+        if compiled.schedules:
+            preferences.schedules = compiled.schedules
+            preferences.daily_time = compiled.schedules[0].time
         preferences.timezone = settings.timezone
         if chat_id:
             preferences.target_type = "chat_id"
@@ -81,10 +86,9 @@ def handle_schedule_message(settings: Settings, body: dict[str, Any]) -> Schedul
         save_delivery_preferences(settings.delivery_preferences_path, preferences)
         return ScheduleMessageResult(
             handled=True,
-            reply_text=(
-                "好，我已经把每日自动推送改成每天 {0}，并绑定到当前会话。"
-                "之后你继续用自然语言改内容偏好就行，比如“更关注机器人，日报控制在 5 条”。"
-            ).format(preferences.daily_time),
+            reply_text="{0} 之后你继续用自然语言改内容偏好就行，比如“更关注机器人，日报控制在 5 条”。".format(
+                render_delivery_preferences(preferences).replace("当前已设置为", "好，我已经把自动推送改成")
+            ),
         )
 
     return ScheduleMessageResult(handled=False)
@@ -173,9 +177,6 @@ def _looks_like_generate_now_text(text: str) -> bool:
 
 def _parse_daily_time(text: str) -> Optional[str]:
     lowered = normalize_text(text)
-    if not any(marker in lowered for marker in ["每天", "每日", "推送", "日报"]):
-        return None
-
     match = re.search(r"(\d{1,2})\s*[:：]\s*(\d{1,2})", lowered)
     if match:
         hour = int(match.group(1))
@@ -206,6 +207,70 @@ def _parse_daily_time(text: str) -> Optional[str]:
     return _format_time(hour, minute)
 
 
+def _parse_schedules(text: str) -> list[DeliverySchedule]:
+    lowered = normalize_text(text)
+    if not any(marker in lowered for marker in ["推送", "日报", "晨报", "晚报", "发", "固定住"]):
+        return []
+
+    schedules: list[DeliverySchedule] = []
+    segments = [segment.strip() for segment in re.split(r"[，,。；;]\s*", text) if segment.strip()]
+    if not segments:
+        segments = [text]
+
+    for segment in segments:
+        schedule = _parse_schedule_segment(segment)
+        if schedule and not _schedule_exists(schedules, schedule):
+            schedules.append(schedule)
+
+    if schedules:
+        return schedules
+
+    fallback_time = _parse_daily_time(text)
+    if fallback_time:
+        return [DeliverySchedule(days=list(DAY_CODES), time=fallback_time)]
+    return []
+
+
+def _parse_schedule_segment(text: str) -> Optional[DeliverySchedule]:
+    schedule_time = _parse_daily_time(text)
+    if not schedule_time:
+        return None
+    days = _parse_days(text)
+    return DeliverySchedule(days=days or list(DAY_CODES), time=schedule_time)
+
+
+def _parse_days(text: str) -> list[str]:
+    lowered = normalize_text(text)
+    if any(marker in lowered for marker in ["工作日", "周一到周五", "周一至周五", "星期一到星期五", "weekday", "weekdays"]):
+        return list(WORKDAY_CODES)
+    if any(marker in lowered for marker in ["周末", "双休日", "星期六日", "星期六和星期日", "weekend", "weekends"]):
+        return list(WEEKEND_CODES)
+    if any(marker in lowered for marker in ["每天", "每日", "天天", "每天都", "每日都"]):
+        return list(DAY_CODES)
+
+    day_markers = [
+        ("mon", ["周一", "星期一", "礼拜一"]),
+        ("tue", ["周二", "星期二", "礼拜二"]),
+        ("wed", ["周三", "星期三", "礼拜三"]),
+        ("thu", ["周四", "星期四", "礼拜四"]),
+        ("fri", ["周五", "星期五", "礼拜五"]),
+        ("sat", ["周六", "星期六", "礼拜六"]),
+        ("sun", ["周日", "周天", "星期日", "星期天", "礼拜天", "礼拜日"]),
+    ]
+    days: list[str] = []
+    for code, markers in day_markers:
+        if any(marker in lowered for marker in markers):
+            days.append(code)
+    return days
+
+
+def _schedule_exists(schedules: list[DeliverySchedule], candidate: DeliverySchedule) -> bool:
+    for schedule in schedules:
+        if schedule.time == candidate.time and schedule.days == candidate.days:
+            return True
+    return False
+
+
 def _format_time(hour: int, minute: int) -> Optional[str]:
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         return None
@@ -223,9 +288,9 @@ def _compile_delivery_request(
         return CompiledDeliveryRequest(generate_now=True, rationale="命中立即生成日报规则。")
     if _is_disable_schedule_request(text):
         return CompiledDeliveryRequest(enabled=False, rationale="命中暂停推送规则。")
-    schedule_time = _parse_daily_time(text)
-    if schedule_time:
-        return CompiledDeliveryRequest(enabled=True, daily_time=schedule_time, rationale="命中时间解析规则。")
+    schedules = _parse_schedules(text)
+    if schedules:
+        return CompiledDeliveryRequest(enabled=True, schedules=schedules, rationale="命中时间解析规则。")
     if _is_enable_schedule_request(text):
         return CompiledDeliveryRequest(enabled=True, rationale="命中恢复推送规则。")
     if settings.has_openai:
@@ -245,11 +310,12 @@ def _compile_delivery_request_with_llm(
     url = settings.openai_base_url.rstrip("/") + "/chat/completions"
     prompt = (
         "你是 Agent 运行配置编译器。把用户的自然语言需求翻译成 JSON。"
-        "只输出 JSON，字段只能使用：generate_now, show_schedule, enabled, daily_time, rationale。"
+        "只输出 JSON，字段只能使用：generate_now, show_schedule, enabled, schedules, rationale。"
         "generate_now/show_schedule 必须是布尔值。enabled 只能是 true/false/null。"
-        "daily_time 只能是 HH:MM 或 null，按 24 小时制输出。"
-        "如果用户只是想立刻生成一版日报，不要修改 enabled 和 daily_time。"
-        "如果用户只是想查看当前推送设置，不要修改 enabled 和 daily_time。"
+        "schedules 必须是数组，元素字段只能是 days 和 time。"
+        "days 只能使用 mon,tue,wed,thu,fri,sat,sun；time 只能是 HH:MM。"
+        "如果用户只是想立刻生成一版日报，不要修改 enabled 和 schedules。"
+        "如果用户只是想查看当前推送设置，不要修改 enabled 和 schedules。"
         "如果用户没有明确表达调度诉求，就把所有字段置为空或 false。"
     )
     payload = {
@@ -257,6 +323,7 @@ def _compile_delivery_request_with_llm(
         "current_delivery_preferences": {
             "enabled": preferences.enabled,
             "daily_time": preferences.daily_time,
+            "schedules": [{"days": schedule.days, "time": schedule.time} for schedule in preferences.schedules],
             "timezone": preferences.timezone,
         },
         "timezone": settings.timezone,
@@ -285,7 +352,7 @@ def _compile_delivery_request_with_llm(
         generate_now=bool(raw.get("generate_now", False)),
         show_schedule=bool(raw.get("show_schedule", False)),
         enabled=_coerce_optional_bool(raw.get("enabled")),
-        daily_time=_coerce_time_string(raw.get("daily_time")),
+        schedules=_coerce_schedules(raw.get("schedules")),
         rationale=str(raw.get("rationale") or "").strip(),
     )
 
@@ -311,6 +378,31 @@ def _coerce_time_string(value: object) -> Optional[str]:
     if not match:
         return None
     return _format_time(int(match.group(1)), int(match.group(2)))
+
+
+def _coerce_schedules(value: object) -> list[DeliverySchedule]:
+    if not isinstance(value, list):
+        return []
+    schedules: list[DeliverySchedule] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        time = _coerce_time_string(item.get("time"))
+        days = _coerce_days(item.get("days"))
+        if time and days and not _schedule_exists(schedules, DeliverySchedule(days=days, time=time)):
+            schedules.append(DeliverySchedule(days=days, time=time))
+    return schedules
+
+
+def _coerce_days(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    days: list[str] = []
+    for item in value:
+        label = normalize_text(str(item))
+        if label in DAY_CODES and label not in days:
+            days.append(label)
+    return days
 
 
 def _extract_sender_type(body: dict[str, Any]) -> str:

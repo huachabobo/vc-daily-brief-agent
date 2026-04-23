@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from vc_agent.delivery_preferences import load_delivery_preferences
+from vc_agent.delivery_preferences import load_delivery_preferences, render_delivery_preferences
 from vc_agent.feedback.schedule_commands import (
     handle_schedule_message,
     looks_like_generate_now_request,
@@ -51,6 +51,22 @@ def test_schedule_message_understands_shorter_natural_language(tmp_path):
     assert result.handled is True
     preferences = load_delivery_preferences(settings.delivery_preferences_path, settings.timezone)
     assert preferences.daily_time == "09:00"
+
+
+def test_schedule_message_supports_weekday_and_weekend_rules(tmp_path):
+    settings = _settings(Path(tmp_path))
+
+    result = handle_schedule_message(settings, _make_body("工作日 9 点推送，周末 10 点半推送"))
+
+    assert result.handled is True
+    preferences = load_delivery_preferences(settings.delivery_preferences_path, settings.timezone)
+    assert len(preferences.schedules) == 2
+    assert preferences.schedules[0].days == ["mon", "tue", "wed", "thu", "fri"]
+    assert preferences.schedules[0].time == "09:00"
+    assert preferences.schedules[1].days == ["sat", "sun"]
+    assert preferences.schedules[1].time == "10:30"
+    assert "工作日 09:00" in render_delivery_preferences(preferences)
+    assert "周末 10:30" in render_delivery_preferences(preferences)
 
 
 def test_schedule_message_can_disable_push(tmp_path):

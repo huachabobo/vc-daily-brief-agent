@@ -8,7 +8,7 @@ from datetime import datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from vc_agent.delivery_preferences import load_delivery_preferences
+from vc_agent.delivery_preferences import DeliverySchedule, load_delivery_preferences, schedule_identity
 from vc_agent.pipeline.run_once import run
 from vc_agent.settings import Settings
 from vc_agent.utils.time import utcnow
@@ -46,35 +46,42 @@ class BriefScheduler:
         if not preferences.enabled:
             return
 
-        try:
-            hour, minute = _parse_time_string(preferences.daily_time)
-        except ValueError:
-            LOGGER.warning("忽略无效的每日推送时间: %s", preferences.daily_time)
-            return
-
         tz_name = preferences.timezone or self.settings.timezone
         now_local = utcnow().astimezone(ZoneInfo(tz_name))
-        scheduled_at = datetime.combine(now_local.date(), time(hour=hour, minute=minute), tzinfo=ZoneInfo(tz_name))
         run_date = now_local.strftime("%Y-%m-%d")
         state = self._load_state()
+        completed_runs = set(state.get("completed_runs") or [])
+        schedules = preferences.schedules or [DeliverySchedule(days=["mon", "tue", "wed", "thu", "fri", "sat", "sun"], time=preferences.daily_time)]
 
-        if state.get("last_scheduled_run_date") == run_date:
-            return
-        if now_local < scheduled_at:
-            return
-        if not self._runner_lock.acquire(blocking=False):
-            return
+        weekday_code = _weekday_code(now_local.weekday())
+        for schedule in schedules:
+            if weekday_code not in schedule.days:
+                continue
+            try:
+                hour, minute = _parse_time_string(schedule.time)
+            except ValueError:
+                LOGGER.warning("忽略无效的推送时间: %s", schedule.time)
+                continue
+            scheduled_at = datetime.combine(now_local.date(), time(hour=hour, minute=minute), tzinfo=ZoneInfo(tz_name))
+            run_key = "{0}:{1}".format(run_date, schedule_identity(schedule))
+            if run_key in completed_runs:
+                continue
+            if now_local < scheduled_at:
+                continue
+            if not self._runner_lock.acquire(blocking=False):
+                return
 
-        try:
-            state["last_scheduled_run_date"] = run_date
-            self._save_state(state)
-            worker_settings = _settings_for_target(self.settings, preferences.target_type, preferences.target_id)
-            result = run(worker_settings)
-            LOGGER.info("每日自动推送完成: %s", result)
-        except Exception:
-            LOGGER.exception("每日自动推送失败。")
-        finally:
-            self._runner_lock.release()
+            try:
+                completed_runs.add(run_key)
+                state["completed_runs"] = _trim_completed_runs(completed_runs)
+                self._save_state(state)
+                worker_settings = _settings_for_target(self.settings, preferences.target_type, preferences.target_id)
+                result = run(worker_settings)
+                LOGGER.info("自动推送完成(%s): %s", schedule_identity(schedule), result)
+            except Exception:
+                LOGGER.exception("自动推送失败(%s)。", schedule_identity(schedule))
+            finally:
+                self._runner_lock.release()
 
     def _load_state(self) -> dict:
         if not self._state_path.exists():
@@ -104,3 +111,11 @@ def _parse_time_string(value: str) -> tuple[int, int]:
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         raise ValueError("invalid time range")
     return hour, minute
+
+
+def _trim_completed_runs(completed_runs: set[str], limit: int = 50) -> list[str]:
+    return sorted(completed_runs)[-limit:]
+
+
+def _weekday_code(index: int) -> str:
+    return ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][index]

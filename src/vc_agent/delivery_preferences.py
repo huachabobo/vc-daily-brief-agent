@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+
+DAY_CODES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+WORKDAY_CODES = ["mon", "tue", "wed", "thu", "fri"]
+WEEKEND_CODES = ["sat", "sun"]
+
+
+@dataclass
+class DeliverySchedule:
+    days: list[str]
+    time: str
 
 
 @dataclass
 class DeliveryPreferences:
     enabled: bool = False
     daily_time: str = "08:00"
+    schedules: list[DeliverySchedule] = field(default_factory=list)
     timezone: str = "Asia/Shanghai"
     target_type: str = ""
     target_id: str = ""
@@ -18,9 +30,12 @@ def load_delivery_preferences(path: Path, default_timezone: str) -> DeliveryPref
     if not path.exists():
         return DeliveryPreferences(timezone=default_timezone)
     payload = json.loads(path.read_text(encoding="utf-8"))
+    schedules = _load_schedules(payload)
+    daily_time = str(payload.get("daily_time") or (schedules[0].time if schedules else "08:00"))
     return DeliveryPreferences(
         enabled=bool(payload.get("enabled", False)),
-        daily_time=str(payload.get("daily_time") or "08:00"),
+        daily_time=daily_time,
+        schedules=schedules,
         timezone=str(payload.get("timezone") or default_timezone),
         target_type=str(payload.get("target_type") or ""),
         target_id=str(payload.get("target_id") or ""),
@@ -28,12 +43,82 @@ def load_delivery_preferences(path: Path, default_timezone: str) -> DeliveryPref
 
 
 def save_delivery_preferences(path: Path, preferences: DeliveryPreferences) -> None:
+    schedules = preferences.schedules or [DeliverySchedule(days=list(DAY_CODES), time=preferences.daily_time)]
+    payload = {
+        "enabled": preferences.enabled,
+        "daily_time": schedules[0].time,
+        "schedules": [
+            {"days": _normalize_days(schedule.days), "time": schedule.time}
+            for schedule in schedules
+        ],
+        "timezone": preferences.timezone,
+        "target_type": preferences.target_type,
+        "target_id": preferences.target_id,
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(preferences), ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def render_delivery_preferences(preferences: DeliveryPreferences) -> str:
     if not preferences.enabled:
         return "当前还没有启用每日自动推送。你可以直接发：每天早上 8 点推送日报。"
     target = "当前会话" if preferences.target_type and preferences.target_id else "默认接收目标"
-    return "当前已设置为每天 {0} 自动推送到{1}。".format(preferences.daily_time, target)
+    schedules = preferences.schedules or [DeliverySchedule(days=list(DAY_CODES), time=preferences.daily_time)]
+    rendered = "，".join(_render_schedule(schedule) for schedule in schedules)
+    return "当前已设置为 {0} 自动推送到{1}。".format(rendered, target)
+
+
+def schedule_identity(schedule: DeliverySchedule) -> str:
+    return "{0}@{1}".format(",".join(_normalize_days(schedule.days)), schedule.time)
+
+
+def _load_schedules(payload: dict) -> list[DeliverySchedule]:
+    raw_schedules = payload.get("schedules")
+    schedules: list[DeliverySchedule] = []
+    if isinstance(raw_schedules, list):
+        for entry in raw_schedules:
+            if not isinstance(entry, dict):
+                continue
+            time = str(entry.get("time") or "").strip()
+            days = _normalize_days(entry.get("days") or [])
+            if time and days:
+                schedules.append(DeliverySchedule(days=days, time=time))
+    if schedules:
+        return schedules
+    legacy_time = str(payload.get("daily_time") or "08:00")
+    return [DeliverySchedule(days=list(DAY_CODES), time=legacy_time)]
+
+
+def _normalize_days(raw_days: object) -> list[str]:
+    if not isinstance(raw_days, list):
+        return list(DAY_CODES)
+    values: list[str] = []
+    for day in raw_days:
+        label = str(day).strip().lower()
+        if label in DAY_CODES and label not in values:
+            values.append(label)
+    return values or list(DAY_CODES)
+
+
+def _render_schedule(schedule: DeliverySchedule) -> str:
+    days = _normalize_days(schedule.days)
+    if days == DAY_CODES:
+        return "每天 {0}".format(schedule.time)
+    if days == WORKDAY_CODES:
+        return "工作日 {0}".format(schedule.time)
+    if days == WEEKEND_CODES:
+        return "周末 {0}".format(schedule.time)
+    return "{0} {1}".format(_render_day_labels(days), schedule.time)
+
+
+def _render_day_labels(days: list[str]) -> str:
+    labels = {
+        "mon": "周一",
+        "tue": "周二",
+        "wed": "周三",
+        "thu": "周四",
+        "fri": "周五",
+        "sat": "周六",
+        "sun": "周日",
+    }
+    return "、".join(labels[day] for day in days if day in labels)
