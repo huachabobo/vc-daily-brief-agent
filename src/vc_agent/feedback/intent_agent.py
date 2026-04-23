@@ -7,8 +7,12 @@ from typing import Any
 
 import requests
 
-from vc_agent.feedback.message_preferences import PreferenceMessageResult, handle_preference_message
-from vc_agent.feedback.schedule_commands import ScheduleMessageResult, handle_schedule_message
+from vc_agent.feedback.message_preferences import handle_preference_message, looks_like_preference_message
+from vc_agent.feedback.schedule_commands import (
+    handle_schedule_message,
+    looks_like_generate_now_message,
+    looks_like_schedule_message,
+)
 from vc_agent.settings import Settings
 from vc_agent.utils.text import compact_sentence, normalize_text
 
@@ -84,6 +88,9 @@ def handle_message_with_intent_agent(settings: Settings, body: dict[str, Any]) -
 
 
 def _plan_tools(settings: Settings, text: str) -> list[str]:
+    heuristic_tools = _plan_tools_with_heuristics(text)
+    if heuristic_tools:
+        return heuristic_tools
     if settings.has_openai:
         try:
             tools = _plan_tools_with_llm(settings, text)
@@ -92,6 +99,17 @@ def _plan_tools(settings: Settings, text: str) -> list[str]:
         except Exception as exc:
             LOGGER.warning("意图调度器规划失败，降级到传统路由: %s", exc)
     return []
+
+
+def _plan_tools_with_heuristics(text: str) -> list[str]:
+    tools: list[str] = []
+    if looks_like_schedule_message(text):
+        tools.append("schedule")
+    if looks_like_preference_message(text):
+        tools.append("preference")
+    if looks_like_generate_now_message(text):
+        tools.append("generate_now")
+    return tools
 
 
 def _plan_tools_with_llm(settings: Settings, text: str) -> list[str]:

@@ -65,6 +65,8 @@ class Item:
 @dataclass
 class BriefEntry:
     item_id: int
+    source_key: str
+    platform_item_id: str
     title: str
     summary: str
     why_it_matters: str

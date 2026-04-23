@@ -579,6 +579,19 @@ def _is_cancel_request(text: str) -> bool:
     return lowered in markers
 
 
+def looks_like_preference_message(text: str) -> bool:
+    return any(
+        (
+            _is_help_request(text),
+            _is_show_profile_request(text),
+            _is_undo_request(text),
+            _is_confirm_request(text),
+            _is_cancel_request(text),
+            _looks_like_preference(text),
+        )
+    )
+
+
 def _looks_like_preference(text: str) -> bool:
     lowered = normalize_text(text)
     if re.search(r"(\d+)\s*条", lowered):

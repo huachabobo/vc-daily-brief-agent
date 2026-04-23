@@ -35,6 +35,13 @@ class FeedbackHandleResult:
         }
 
 
+@dataclass(frozen=True)
+class FeedbackTarget:
+    item_id: Optional[int]
+    source_key: str = ""
+    platform_item_id: str = ""
+
+
 def handle_feedback_payload(
     repo: Repository,
     body: Dict[str, Any],
@@ -64,6 +71,26 @@ def handle_feedback_payload(
     return FeedbackHandleResult(item_id=item_id, label=label)
 
 
+def extract_feedback_target(body: Dict[str, Any]) -> FeedbackTarget:
+    return FeedbackTarget(
+        item_id=_extract_item_id(body),
+        source_key=_extract_action_value(body, "source_key") or "",
+        platform_item_id=_extract_action_value(body, "platform_item_id") or "",
+    )
+
+
+def item_matches_feedback_target(item: Any, target: FeedbackTarget) -> bool:
+    if item is None:
+        return False
+    if target.item_id is not None and getattr(item, "item_id", None) != target.item_id:
+        return False
+    if target.source_key and getattr(item, "source_key", "") != target.source_key:
+        return False
+    if target.platform_item_id and getattr(item, "platform_item_id", "") != target.platform_item_id:
+        return False
+    return True
+
+
 def _extract_item_id(body: Dict[str, Any]) -> Optional[int]:
     raw = _deep_get(body, ["action", "value", "item_id"])
     if raw is None:
@@ -76,12 +103,14 @@ def _extract_item_id(body: Dict[str, Any]) -> Optional[int]:
 
 
 def _extract_label(body: Dict[str, Any]) -> Optional[str]:
-    label = _deep_get(body, ["action", "value", "label"])
-    if label is None:
-        label = _deep_get(body, ["event", "action", "value", "label"])
-    if label is None:
-        label = body.get("label")
-    return label
+    return _extract_action_value(body, "label") or body.get("label")
+
+
+def _extract_action_value(body: Dict[str, Any], field: str) -> Optional[Any]:
+    value = _deep_get(body, ["action", "value", field])
+    if value is None:
+        value = _deep_get(body, ["event", "action", "value", field])
+    return value
 
 
 def _extract_user_id(body: Dict[str, Any]) -> Optional[str]:

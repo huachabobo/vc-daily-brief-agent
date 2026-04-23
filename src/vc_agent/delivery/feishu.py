@@ -246,13 +246,23 @@ class FeishuNotifier:
                                 "tag": "button",
                                 "text": {"tag": "plain_text", "content": "👍 有用"},
                                 "type": "primary",
-                                "value": {"item_id": str(entry.item_id), "label": "useful"},
+                                "value": {
+                                    "item_id": str(entry.item_id),
+                                    "label": "useful",
+                                    "source_key": entry.source_key,
+                                    "platform_item_id": entry.platform_item_id,
+                                },
                             },
                             {
                                 "tag": "button",
                                 "text": {"tag": "plain_text", "content": "👎 不想看"},
                                 "type": "default",
-                                "value": {"item_id": str(entry.item_id), "label": "dislike"},
+                                "value": {
+                                    "item_id": str(entry.item_id),
+                                    "label": "dislike",
+                                    "source_key": entry.source_key,
+                                    "platform_item_id": entry.platform_item_id,
+                                },
                             },
                         ],
                     }

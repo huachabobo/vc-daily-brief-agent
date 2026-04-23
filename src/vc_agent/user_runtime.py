@@ -18,6 +18,8 @@ def iter_runtime_settings(settings: Settings) -> list[Settings]:
     user_root = _users_root(settings)
     user_dirs = sorted(path for path in user_root.iterdir() if path.is_dir()) if user_root.exists() else []
     scoped: list[Settings] = []
+    if settings.delivery_preferences_path.exists():
+        scoped.append(settings)
     for user_dir in user_dirs:
         delivery_path = user_dir / "delivery_preferences.json"
         if delivery_path.exists():

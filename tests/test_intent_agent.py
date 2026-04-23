@@ -99,3 +99,15 @@ def test_intent_agent_can_reply_to_general_chat(monkeypatch, tmp_path):
     assert result.handled is True
     assert len(result.reply_texts) == 1
     assert "VC Daily Brief" in result.reply_texts[0] or "助手" in result.reply_texts[0]
+
+
+def test_intent_agent_uses_heuristics_when_openai_is_unavailable(tmp_path):
+    settings = _setup_repo(Path(tmp_path))
+    settings.openai_api_key = ""
+
+    result = handle_message_with_intent_agent(settings, _make_body("改成 9 点推送，推送 5 条"))
+
+    assert result.handled is True
+    assert result.reply_card is not None
+    preferences = load_delivery_preferences(settings.delivery_preferences_path, settings.timezone)
+    assert preferences.daily_time == "09:00"

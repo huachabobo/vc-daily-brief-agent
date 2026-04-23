@@ -9,9 +9,8 @@ from vc_agent.feedback.processing import (
     FeedbackValidationError,
     handle_feedback_payload,
 )
+from vc_agent.feedback.repository_routing import repository_for_feedback
 from vc_agent.settings import Settings
-from vc_agent.storage import Repository
-from vc_agent.user_runtime import settings_for_user
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -35,9 +34,7 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(status_code=403, detail="invalid token")
 
         try:
-            scoped_settings = _runtime_settings_for_callback(settings, body)
-            repo = Repository(scoped_settings.db_path)
-            repo.init_db()
+            repo = repository_for_feedback(settings, body)
             result = handle_feedback_payload(repo, body, source_hint="feishu_http")
         except FeedbackValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -47,28 +44,6 @@ def create_app(settings: Settings) -> FastAPI:
         return result.as_feishu_response()
 
     return app
-
-
-def _runtime_settings_for_callback(settings: Settings, body: Dict[str, Any]) -> Settings:
-    user_key = _extract_callback_user_key(body)
-    if not user_key:
-        return settings
-    return settings_for_user(settings, user_key)
-
-
-def _extract_callback_user_key(body: Dict[str, Any]) -> str:
-    for path in (
-        ["operator", "open_id"],
-        ["event", "operator", "open_id"],
-        ["operator", "user_id"],
-        ["event", "operator", "user_id"],
-        ["event", "message", "chat_id"],
-        ["action", "open_chat_id"],
-    ):
-        value = _deep_get(body, path)
-        if value:
-            return str(value)
-    return ""
 
 
 def _deep_get(payload: Dict[str, Any], keys: list[str]) -> Any:

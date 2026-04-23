@@ -7,7 +7,6 @@ from vc_agent.feedback.processing import handle_feedback_payload
 from vc_agent.feedback.server import create_app
 from vc_agent.settings import Settings
 from vc_agent.storage import Repository
-from vc_agent.user_runtime import settings_for_user
 from vc_agent.utils.time import utcnow
 
 
@@ -101,8 +100,9 @@ def test_http_feedback_callback_uses_user_scoped_runtime_when_operator_exists(tm
     global_repo = Repository(settings.db_path)
     global_repo.init_db()
 
-    scoped_settings = settings_for_user(settings, "ou_http_user")
-    scoped_repo = Repository(scoped_settings.db_path)
+    scoped_db_path = tmp_path / "data" / "users" / "ou_http_user" / "vc_agent.db"
+    scoped_db_path.parent.mkdir(parents=True, exist_ok=True)
+    scoped_repo = Repository(scoped_db_path)
     scoped_repo.init_db()
     item = Item(
         item_id=None,
@@ -136,3 +136,60 @@ def test_http_feedback_callback_uses_user_scoped_runtime_when_operator_exists(tm
     assert response.status_code == 200
     assert scoped_repo.load_preference_state().topic_weights["AI"] > 0
     assert global_repo.load_preference_state().topic_weights == {}
+
+
+def test_http_feedback_callback_falls_back_to_global_repo_when_scoped_repo_misses_item(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    settings = Settings.from_env(root)
+    settings.db_path = tmp_path / "global.db"
+    settings.delivery_preferences_path = tmp_path / "delivery_preferences.json"
+    settings.user_profile_config = tmp_path / "user_profile.yaml"
+    settings.repo_root = tmp_path
+    settings.ensure_runtime_dirs()
+
+    global_repo = Repository(settings.db_path)
+    global_repo.init_db()
+    item = Item(
+        item_id=None,
+        raw_item_id=103,
+        platform="youtube",
+        source_key="source",
+        source_name="High Signal Channel",
+        platform_item_id="video-103",
+        url="https://example.com/103",
+        title="Robotics platform update",
+        description="robotics deployment signal",
+        normalized_title="robotics platform update",
+        normalized_text="robotics platform update robotics deployment signal",
+        published_at=utcnow(),
+        topic="机器人",
+        tags=["机器人"],
+    )
+    item_id = global_repo.upsert_item(item)
+
+    scoped_db_path = tmp_path / "data" / "users" / "ou_http_user" / "vc_agent.db"
+    scoped_db_path.parent.mkdir(parents=True, exist_ok=True)
+    scoped_repo = Repository(scoped_db_path)
+    scoped_repo.init_db()
+
+    client = TestClient(create_app(settings))
+    response = client.post(
+        "/feishu/callback",
+        json={
+            "event": {
+                "operator": {"open_id": "ou_http_user"},
+                "action": {
+                    "value": {
+                        "item_id": str(item_id),
+                        "label": "useful",
+                        "source_key": "source",
+                        "platform_item_id": "video-103",
+                    }
+                },
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert global_repo.load_preference_state().topic_weights["机器人"] > 0
+    assert scoped_repo.load_preference_state().topic_weights == {}

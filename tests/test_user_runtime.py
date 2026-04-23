@@ -21,7 +21,7 @@ def test_settings_for_user_migrates_global_runtime_for_first_user(tmp_path):
     assert scoped.user_profile_config.read_text(encoding="utf-8") == (root / "config" / "user_profile.yaml").read_text(encoding="utf-8")
 
 
-def test_iter_runtime_settings_prefers_user_scoped_delivery_targets(tmp_path):
+def test_iter_runtime_settings_keeps_global_and_user_scoped_delivery_targets(tmp_path):
     root = Path(tmp_path)
     (root / "data" / "users" / "ou_user_a").mkdir(parents=True)
     (root / "data" / "users" / "ou_user_b").mkdir(parents=True)
@@ -32,5 +32,6 @@ def test_iter_runtime_settings_prefers_user_scoped_delivery_targets(tmp_path):
     settings = Settings.from_env(root)
     scoped_settings = iter_runtime_settings(settings)
 
-    assert len(scoped_settings) == 2
-    assert all("/data/users/" in str(item.delivery_preferences_path) for item in scoped_settings)
+    assert len(scoped_settings) == 3
+    assert scoped_settings[0].delivery_preferences_path == root / "data" / "delivery_preferences.json"
+    assert sum("/data/users/" in str(item.delivery_preferences_path) for item in scoped_settings) == 2

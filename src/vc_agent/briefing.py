@@ -71,6 +71,8 @@ def build_daily_brief(brief_date: str, items: List[Item], previous_items: Option
         grouped[topic].append(
             BriefEntry(
                 item_id=item.item_id or 0,
+                source_key=item.source_key,
+                platform_item_id=item.platform_item_id,
                 title=item.title,
                 summary=item.summary,
                 why_it_matters=item.why_it_matters,

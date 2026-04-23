@@ -22,9 +22,9 @@ from vc_agent.feedback.processing import (
     FeedbackValidationError,
     handle_feedback_payload,
 )
+from vc_agent.feedback.repository_routing import repository_for_feedback
 from vc_agent.pipeline.run_once import run
 from vc_agent.settings import Settings
-from vc_agent.storage import Repository
 from vc_agent.user_runtime import settings_for_user
 
 
@@ -75,8 +75,6 @@ def serve_long_connection(settings: Settings) -> None:
         LOGGER.info("收到飞书长连接卡片交互回调。")
         operator_open_id = _extract_operator_open_id(body)
         scoped_settings = settings_for_user(settings, operator_open_id or _extract_chat_id(body) or "default")
-        repo = Repository(scoped_settings.db_path)
-        repo.init_db()
         if _has_preference_assistant_action(body):
             try:
                 result = handle_preference_card_action(scoped_settings, body)
@@ -101,6 +99,7 @@ def serve_long_connection(settings: Settings) -> None:
                     }
                 )
         try:
+            repo = repository_for_feedback(settings, body)
             result = handle_feedback_payload(repo, body, source_hint="feishu_long_connection")
             return P2CardActionTriggerResponse(result.as_feishu_response())
         except FeedbackValidationError:

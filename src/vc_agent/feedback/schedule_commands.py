@@ -121,6 +121,21 @@ def looks_like_generate_now_request(settings: Settings, body: dict[str, Any]) ->
     return compiled.generate_now
 
 
+def looks_like_schedule_message(text: str) -> bool:
+    return any(
+        (
+            _is_show_schedule_request(text),
+            _is_disable_schedule_request(text),
+            _is_enable_schedule_request(text),
+            _looks_like_schedule_request(normalize_text(text)),
+        )
+    )
+
+
+def looks_like_generate_now_message(text: str) -> bool:
+    return _looks_like_generate_now_text(normalize_text(text))
+
+
 def looks_like_preference_followup(text: str) -> bool:
     lowered = normalize_text(text)
     if re.search(r"(\d+)\s*条", lowered):
