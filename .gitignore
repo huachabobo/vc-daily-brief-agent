@@ -3,6 +3,9 @@
 __pycache__/
 .DS_Store
 data/*.db
+data/delivery_preferences.json
+data/delivery_scheduler_state.json
+data/preference_assistant_state.json
 sample_output/*_brief.md
 !sample_output/2026-04-23_brief.md
 !sample_output/2026-04-23_mock.md

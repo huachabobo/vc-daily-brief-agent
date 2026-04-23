@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import threading
 import json
 import logging
+from dataclasses import replace
 from typing import Any
 
 from vc_agent.delivery.feishu import FeishuNotifier
@@ -9,11 +11,13 @@ from vc_agent.feedback.message_preferences import (
     handle_preference_card_action,
     handle_preference_message,
 )
+from vc_agent.feedback.schedule_commands import handle_schedule_message, looks_like_generate_now_request
 from vc_agent.feedback.processing import (
     FeedbackNotFoundError,
     FeedbackValidationError,
     handle_feedback_payload,
 )
+from vc_agent.pipeline.run_once import run
 from vc_agent.settings import Settings
 from vc_agent.storage import Repository
 
@@ -107,10 +111,20 @@ def serve_long_connection(settings: Settings) -> None:
         text = _safe_message_preview(data)
         LOGGER.info("收到飞书消息事件。preview=%s", text)
         try:
+            chat_id = _extract_chat_id(body)
+            if looks_like_generate_now_request(body):
+                _handle_generate_now_request(settings, notifier, chat_id)
+                return
+            schedule_result = handle_schedule_message(settings, body)
+            if schedule_result.handled:
+                if not chat_id:
+                    LOGGER.warning("飞书消息缺少 chat_id，无法回复调度设置。body=%s", body)
+                    return
+                notifier.send_text_message("chat_id", chat_id, schedule_result.reply_text)
+                return
             result = handle_preference_message(settings, body)
             if not result.should_reply:
                 return
-            chat_id = _extract_chat_id(body)
             if not chat_id:
                 LOGGER.warning("飞书消息缺少 chat_id，无法回复。body=%s", body)
                 return
@@ -174,3 +188,38 @@ def _has_preference_assistant_action(body: dict[str, Any]) -> bool:
     if not isinstance(value, dict):
         return False
     return bool(value.get("assistant_action"))
+
+
+def _handle_generate_now_request(settings: Settings, notifier: FeishuNotifier, chat_id: str) -> None:
+    if not chat_id:
+        LOGGER.warning("收到生成日报请求，但缺少 chat_id。")
+        return
+    notifier.send_text_message("chat_id", chat_id, "收到，我现在开始生成一版最新日报，完成后会直接发到这个会话。")
+    worker_settings = replace(settings, feishu_chat_id=chat_id, feishu_receive_id_type="", feishu_receive_id="")
+    worker = threading.Thread(
+        target=_run_generate_now_worker,
+        args=(worker_settings, notifier, chat_id),
+        name="vc-agent-generate-now",
+        daemon=True,
+    )
+    worker.start()
+
+
+def _run_generate_now_worker(settings: Settings, notifier: FeishuNotifier, chat_id: str) -> None:
+    try:
+        result = run(settings)
+        notifier.send_text_message(
+            "chat_id",
+            chat_id,
+            "这版日报已经生成并发送完成，共抓到 {0} 条候选内容，最终入选 {1} 条。".format(
+                result.get("candidate_count", 0),
+                result.get("selected_count", 0),
+            ),
+        )
+    except Exception as exc:
+        LOGGER.exception("即时生成日报失败。")
+        notifier.send_text_message(
+            "chat_id",
+            chat_id,
+            "这次日报生成失败了：{0}。你可以稍后再试，或者先发“查看当前偏好 / 查看推送时间”。".format(exc),
+        )

@@ -43,6 +43,7 @@ class Settings:
     output_dir: Path
     sources_config: Path
     user_profile_config: Path
+    delivery_preferences_path: Path
     youtube_api_key: str
     openai_api_key: str
     openai_base_url: str
@@ -74,6 +75,7 @@ class Settings:
         output_dir = repo_root / os.getenv("OUTPUT_DIR", "sample_output")
         sources_config = repo_root / os.getenv("SOURCES_CONFIG", "config/sources.yaml")
         user_profile_config = repo_root / os.getenv("USER_PROFILE_CONFIG", "config/user_profile.yaml")
+        delivery_preferences_path = repo_root / os.getenv("DELIVERY_PREFERENCES_PATH", "data/delivery_preferences.json")
 
         return cls(
             repo_root=repo_root,
@@ -81,6 +83,7 @@ class Settings:
             output_dir=output_dir,
             sources_config=sources_config,
             user_profile_config=user_profile_config,
+            delivery_preferences_path=delivery_preferences_path,
             youtube_api_key=os.getenv("YOUTUBE_API_KEY", ""),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
@@ -128,5 +131,6 @@ class Settings:
             "output_dir": str(self.output_dir),
             "sources_config": str(self.sources_config),
             "user_profile_config": str(self.user_profile_config),
+            "delivery_preferences_path": str(self.delivery_preferences_path),
             "timezone": self.timezone,
         }
