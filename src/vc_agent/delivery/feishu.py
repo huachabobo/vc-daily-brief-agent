@@ -120,6 +120,7 @@ class FeishuNotifier:
                 "tag": "markdown",
                 "content": "\n".join(["- {0}".format(item) for item in brief.highlights]),
             },
+            {"tag": "markdown", "content": "**今日变化**\n" + "\n".join(["- {0}".format(item) for item in brief.shifts])},
             {"tag": "hr"},
         ]
         for topic, entries in brief.grouped_entries.items():
@@ -133,12 +134,14 @@ class FeishuNotifier:
                             "content": (
                                 "**{title}**\n{summary}\n"
                                 "> {why}\n"
+                                "**Why selected**: {selected}\n"
                                 "[查看原文]({url})\n"
                                 "`{tags}`"
                             ).format(
                                 title=entry.title,
                                 summary=entry.summary,
                                 why=entry.why_it_matters,
+                                selected=entry.why_selected,
                                 url=entry.source_url,
                                 tags=" / ".join(entry.tags),
                             ),

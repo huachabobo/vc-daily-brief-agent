@@ -85,7 +85,12 @@ def run(settings: Settings) -> Dict[str, object]:
 
     brief_date = to_local_date(utcnow(), settings.timezone)
     final_selected = [item for item in rescored if item.item_id in selected_ids and item.duplicate_of is None]
-    brief = build_daily_brief(brief_date, final_selected)
+    previous_brief = repo.get_latest_brief_before(brief_date)
+    previous_items: List[Item] = []
+    if previous_brief:
+        _, previous_item_ids = previous_brief
+        previous_items = repo.get_items_by_ids(previous_item_ids)
+    brief = build_daily_brief(brief_date, final_selected, previous_items=previous_items)
     markdown_path = write_brief(settings.output_dir, brief_date, brief.markdown)
 
     notifier = FeishuNotifier(settings)

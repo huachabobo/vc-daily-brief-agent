@@ -66,6 +66,7 @@ class BriefEntry:
     title: str
     summary: str
     why_it_matters: str
+    why_selected: str
     source_name: str
     source_url: str
     topic: str
@@ -77,5 +78,6 @@ class BriefEntry:
 class DailyBrief:
     brief_date: str
     highlights: List[str]
+    shifts: List[str]
     grouped_entries: Dict[str, List[BriefEntry]]
     markdown: str

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from vc_agent.domain import Item, PreferenceState, RawItem
 from vc_agent.utils.time import parse_datetime, utcnow
@@ -309,6 +309,35 @@ class Repository:
                     utcnow().isoformat(),
                 ),
             )
+
+    def get_latest_brief_before(self, brief_date: str) -> Optional[Tuple[str, List[int]]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT brief_date, item_ids_json
+                FROM briefs
+                WHERE brief_date < ?
+                ORDER BY brief_date DESC
+                LIMIT 1
+                """,
+                (brief_date,),
+            ).fetchone()
+        if row is None:
+            return None
+        return row["brief_date"], [int(value) for value in json.loads(row["item_ids_json"])]
+
+    def get_items_by_ids(self, item_ids: Iterable[int]) -> List[Item]:
+        ids = [int(value) for value in item_ids if value is not None]
+        if not ids:
+            return []
+        placeholders = ", ".join(["?"] * len(ids))
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM items WHERE id IN ({0})".format(placeholders),
+                ids,
+            ).fetchall()
+        items = [self._row_to_item(row) for row in rows]
+        return sorted(items, key=lambda item: item.score, reverse=True)
 
     def _row_to_item(self, row: sqlite3.Row) -> Item:
         return Item(
