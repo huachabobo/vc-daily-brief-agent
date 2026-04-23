@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -571,6 +572,8 @@ def _is_cancel_request(text: str) -> bool:
 
 def _looks_like_preference(text: str) -> bool:
     lowered = normalize_text(text)
+    if re.search(r"(\d+)\s*条", lowered):
+        return True
     markers = [
         "关注",
         "优先",

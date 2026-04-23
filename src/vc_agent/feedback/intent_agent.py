@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+
+import requests
+
+from vc_agent.feedback.message_preferences import PreferenceMessageResult, handle_preference_message
+from vc_agent.feedback.schedule_commands import ScheduleMessageResult, handle_schedule_message
+from vc_agent.settings import Settings
+from vc_agent.utils.text import compact_sentence, normalize_text
+
+
+LOGGER = logging.getLogger(__name__)
+
+ALLOWED_TOOLS = {"schedule", "preference", "generate_now"}
+
+
+@dataclass
+class IntentAgentExecution:
+    handled: bool = False
+    reply_texts: list[str] = field(default_factory=list)
+    reply_card: dict | None = None
+    trigger_generate_now: bool = False
+
+
+def handle_message_with_intent_agent(settings: Settings, body: dict[str, Any]) -> IntentAgentExecution:
+    text = _extract_text_message(body)
+    if not text:
+        return IntentAgentExecution()
+
+    planned_tools = _plan_tools(settings, text)
+    if not planned_tools:
+        return IntentAgentExecution()
+
+    execution = IntentAgentExecution(handled=True)
+    notes: list[str] = []
+
+    for tool_name in planned_tools:
+        if tool_name == "schedule":
+            result = handle_schedule_message(settings, body)
+            if not result.handled:
+                continue
+            if result.reply_text:
+                notes.append("schedule: {0}".format(result.reply_text))
+                execution.reply_texts.append(result.reply_text)
+            if result.trigger_generate_now:
+                execution.trigger_generate_now = True
+            continue
+
+        if tool_name == "preference":
+            result = handle_preference_message(settings, body)
+            if not result.should_reply:
+                continue
+            if result.reply_text:
+                notes.append("preference: {0}".format(result.reply_text))
+            if result.reply_card:
+                execution.reply_card = result.reply_card
+            elif result.reply_text:
+                execution.reply_texts.append(result.reply_text)
+            continue
+
+        if tool_name == "generate_now":
+            execution.trigger_generate_now = True
+            notes.append("generate_now: 立即生成并发送一版最新日报。")
+
+    if not notes and not execution.reply_card and not execution.trigger_generate_now:
+        return IntentAgentExecution()
+
+    if settings.has_openai and len(notes) > 1:
+        summary = _summarize_execution(settings, text, notes)
+        if summary:
+            execution.reply_texts = [summary] + execution.reply_texts
+
+    if execution.trigger_generate_now and not any("开始生成" in text for text in execution.reply_texts):
+        execution.reply_texts.append("收到，我会按你的意思继续处理，生成完成后再把结果汇总给你。")
+
+    return execution
+
+
+def _plan_tools(settings: Settings, text: str) -> list[str]:
+    if settings.has_openai:
+        try:
+            tools = _plan_tools_with_llm(settings, text)
+            if tools:
+                return tools
+        except Exception as exc:
+            LOGGER.warning("意图调度器规划失败，降级到传统路由: %s", exc)
+    return []
+
+
+def _plan_tools_with_llm(settings: Settings, text: str) -> list[str]:
+    session = requests.Session()
+    url = settings.openai_base_url.rstrip("/") + "/chat/completions"
+    prompt = (
+        "你是一个消息意图调度器。请根据用户消息，决定要按什么顺序调用内部工具。"
+        "只输出 JSON，字段只能是 tools。"
+        "tools 必须是数组，元素只能从 schedule, preference, generate_now 里选。"
+        "schedule: 调整/查看/暂停/恢复每日推送或按周规则。"
+        "preference: 调整简报条数、关注主题、来源偏好、查看偏好、撤销偏好、确认/取消偏好。"
+        "generate_now: 立即生成并发送一版最新日报。"
+        "如果一句话同时涉及多件事，可以返回多个工具，按执行顺序排列。"
+        "如果只是闲聊或没有明确操作意图，返回空数组。"
+    )
+    response = session.post(
+        url,
+        headers={
+            "Authorization": "Bearer {0}".format(settings.openai_api_key),
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": settings.openai_model,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": json.dumps({"user_text": text}, ensure_ascii=False)},
+            ],
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    content = json.loads(payload["choices"][0]["message"]["content"])
+    raw_tools = content.get("tools")
+    if not isinstance(raw_tools, list):
+        return []
+    tools: list[str] = []
+    for item in raw_tools:
+        label = normalize_text(str(item))
+        if label in ALLOWED_TOOLS and label not in tools:
+            tools.append(label)
+    return tools
+
+
+def _summarize_execution(settings: Settings, user_text: str, notes: list[str]) -> str:
+    fallback = "；".join(notes)
+    session = requests.Session()
+    url = settings.openai_base_url.rstrip("/") + "/chat/completions"
+    response = session.post(
+        url,
+        headers={
+            "Authorization": "Bearer {0}".format(settings.openai_api_key),
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": settings.openai_model,
+            "temperature": 0.2,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是飞书里的 VC Agent。请把内部工具执行结果汇总成一段中文回复。"
+                        "要求：100字以内，说明已经做了什么、接下来会发生什么。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps({"user_text": user_text, "notes": notes, "fallback": fallback}, ensure_ascii=False),
+                },
+            ],
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    message = payload["choices"][0]["message"]["content"].strip()
+    return compact_sentence(message or fallback, limit=120)
+
+
+def _extract_text_message(body: dict[str, Any]) -> str:
+    raw = body.get("event", {}).get("message", {}).get("content")
+    if not raw:
+        return ""
+    if isinstance(raw, dict):
+        return str(raw.get("text") or "").strip()
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return str(parsed.get("text") or "").strip()
+    except Exception:
+        pass
+    return str(raw).strip()

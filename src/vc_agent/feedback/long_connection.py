@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 from vc_agent.delivery.feishu import FeishuNotifier
+from vc_agent.feedback.intent_agent import handle_message_with_intent_agent
 from vc_agent.feedback.message_preferences import (
     handle_preference_card_action,
     handle_preference_message,
@@ -116,6 +117,19 @@ def serve_long_connection(settings: Settings) -> None:
         try:
             chat_id = _extract_chat_id(body)
             text_message = _extract_text_message(body)
+            agent_result = handle_message_with_intent_agent(settings, body)
+            if agent_result.handled:
+                if not chat_id:
+                    LOGGER.warning("飞书消息缺少 chat_id，无法回复 Agent 调度结果。body=%s", body)
+                    return
+                for reply_text in agent_result.reply_texts:
+                    if reply_text:
+                        notifier.send_text_message("chat_id", chat_id, reply_text)
+                if agent_result.reply_card:
+                    notifier.send_interactive_message("chat_id", chat_id, agent_result.reply_card)
+                if agent_result.trigger_generate_now:
+                    _handle_generate_now_request(settings, notifier, chat_id)
+                return
             schedule_result = handle_schedule_message(settings, body)
             if schedule_result.handled:
                 if schedule_result.trigger_generate_now:

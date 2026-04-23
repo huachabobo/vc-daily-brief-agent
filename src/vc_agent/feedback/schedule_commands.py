@@ -157,6 +157,8 @@ def _is_enable_schedule_request(text: str) -> bool:
 
 
 def _looks_like_generate_now_text(text: str) -> bool:
+    if _looks_like_schedule_request(text):
+        return False
     explicit_markers = [
         "立即生成日报",
         "立刻生成日报",
@@ -173,6 +175,36 @@ def _looks_like_generate_now_text(text: str) -> bool:
     if any(marker in text for marker in explicit_markers):
         return True
     return "日报" in text and any(marker in text for marker in ["生成", "重新", "再来", "来一版", "发我", "给我", "帮我"])
+
+
+def _looks_like_schedule_request(text: str) -> bool:
+    lowered = normalize_text(text)
+    schedule_markers = [
+        "每天",
+        "每日",
+        "工作日",
+        "周末",
+        "周一",
+        "周二",
+        "周三",
+        "周四",
+        "周五",
+        "周六",
+        "周日",
+        "星期",
+        "礼拜",
+        "早上",
+        "上午",
+        "中午",
+        "下午",
+        "晚上",
+        "傍晚",
+        "推送",
+        "固定住",
+    ]
+    if any(marker in lowered for marker in schedule_markers):
+        return True
+    return bool(re.search(r"(\d{1,2})\s*(点|:|：)", lowered))
 
 
 def _parse_daily_time(text: str) -> Optional[str]:
