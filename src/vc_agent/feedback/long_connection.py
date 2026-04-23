@@ -11,7 +11,11 @@ from vc_agent.feedback.message_preferences import (
     handle_preference_card_action,
     handle_preference_message,
 )
-from vc_agent.feedback.schedule_commands import handle_schedule_message, looks_like_generate_now_request
+from vc_agent.feedback.schedule_commands import (
+    handle_schedule_message,
+    looks_like_generate_now_request,
+    looks_like_preference_followup,
+)
 from vc_agent.feedback.processing import (
     FeedbackNotFoundError,
     FeedbackValidationError,
@@ -115,13 +119,15 @@ def serve_long_connection(settings: Settings) -> None:
             if looks_like_generate_now_request(body):
                 _handle_generate_now_request(settings, notifier, chat_id)
                 return
+            text_message = _extract_text_message(body)
             schedule_result = handle_schedule_message(settings, body)
             if schedule_result.handled:
                 if not chat_id:
                     LOGGER.warning("飞书消息缺少 chat_id，无法回复调度设置。body=%s", body)
                     return
                 notifier.send_text_message("chat_id", chat_id, schedule_result.reply_text)
-                return
+                if not looks_like_preference_followup(text_message):
+                    return
             result = handle_preference_message(settings, body)
             if not result.should_reply:
                 return
@@ -188,6 +194,21 @@ def _has_preference_assistant_action(body: dict[str, Any]) -> bool:
     if not isinstance(value, dict):
         return False
     return bool(value.get("assistant_action"))
+
+
+def _extract_text_message(body: dict[str, Any]) -> str:
+    raw = body.get("event", {}).get("message", {}).get("content")
+    if not raw:
+        return ""
+    if isinstance(raw, dict):
+        return str(raw.get("text") or "").strip()
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return str(parsed.get("text") or "").strip()
+    except Exception:
+        pass
+    return str(raw).strip()
 
 
 def _handle_generate_now_request(settings: Settings, notifier: FeishuNotifier, chat_id: str) -> None:

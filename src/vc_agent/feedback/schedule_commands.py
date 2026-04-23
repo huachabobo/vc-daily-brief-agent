@@ -90,17 +90,46 @@ def looks_like_generate_now_request(body: dict[str, Any]) -> bool:
     if _extract_message_type(body) != "text":
         return False
     text = normalize_text(_extract_text_message(body))
-    markers = [
+    explicit_markers = [
         "立即生成日报",
         "立刻生成日报",
         "马上生成日报",
         "现在生成日报",
         "来一版日报",
+        "再来一版日报",
+        "重新生成日报",
+        "重新来一版日报",
         "给我今天的日报",
         "现在发日报",
         "生成今天的日报",
     ]
-    return any(marker in text for marker in markers)
+    if any(marker in text for marker in explicit_markers):
+        return True
+    return "日报" in text and any(marker in text for marker in ["生成", "重新", "再来", "来一版", "发我", "给我", "帮我"])
+
+
+def looks_like_preference_followup(text: str) -> bool:
+    lowered = normalize_text(text)
+    if re.search(r"(\d+)\s*条", lowered):
+        return True
+    markers = [
+        "关注",
+        "优先",
+        "少给我",
+        "少看",
+        "不要看",
+        "屏蔽",
+        "不想看",
+        "探索位",
+        "benchmark",
+        "ai",
+        "机器人",
+        "芯片",
+        "nvidia",
+        "asianometry",
+        "semiengineering",
+    ]
+    return any(marker in lowered for marker in markers)
 
 
 def _is_show_schedule_request(text: str) -> bool:

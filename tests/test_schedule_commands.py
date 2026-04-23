@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from vc_agent.delivery_preferences import load_delivery_preferences
-from vc_agent.feedback.schedule_commands import handle_schedule_message, looks_like_generate_now_request
+from vc_agent.feedback.schedule_commands import (
+    handle_schedule_message,
+    looks_like_generate_now_request,
+    looks_like_preference_followup,
+)
 from vc_agent.settings import Settings
 
 
@@ -39,6 +43,16 @@ def test_schedule_message_updates_daily_time(tmp_path):
     assert preferences.target_id == "oc_test_chat"
 
 
+def test_schedule_message_understands_shorter_natural_language(tmp_path):
+    settings = _settings(Path(tmp_path))
+
+    result = handle_schedule_message(settings, _make_body("改成 9 点推送"))
+
+    assert result.handled is True
+    preferences = load_delivery_preferences(settings.delivery_preferences_path, settings.timezone)
+    assert preferences.daily_time == "09:00"
+
+
 def test_schedule_message_can_disable_push(tmp_path):
     settings = _settings(Path(tmp_path))
     handle_schedule_message(settings, _make_body("每天 9:15 推送日报"))
@@ -62,4 +76,11 @@ def test_schedule_message_can_show_current_plan(tmp_path):
 
 def test_generate_now_request_detection():
     assert looks_like_generate_now_request(_make_body("现在生成日报"))
+    assert looks_like_generate_now_request(_make_body("现在就帮我重新生成日报吧"))
     assert not looks_like_generate_now_request(_make_body("查看当前偏好"))
+
+
+def test_preference_followup_detection():
+    assert looks_like_preference_followup("改成 9 点推送，推送 5 条")
+    assert looks_like_preference_followup("每天 9 点推送，更关注芯片")
+    assert not looks_like_preference_followup("每天 9 点推送日报")
