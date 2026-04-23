@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import requests
+
 from vc_agent.pipeline.run_once import load_sources
 from vc_agent.profile import load_user_profile, merge_profile_patch, save_user_profile
-from vc_agent.profile_nlp import PreferenceCompiler
+from vc_agent.profile_nlp import CompiledPreference, PreferenceCompiler
 from vc_agent.ranking.rules import TOPIC_KEYWORDS
 from vc_agent.settings import Settings
+from vc_agent.utils.text import compact_sentence
 from vc_agent.utils.text import normalize_text
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -67,7 +74,7 @@ def handle_preference_message(settings: Settings, body: Dict[str, Any]) -> Prefe
     return PreferenceMessageResult(
         should_reply=True,
         updated=True,
-        reply_text=_render_update_reply(compiled.mode, compiled.patch, updated_profile),
+        reply_text=compose_update_reply(settings, text, compiled, updated_profile),
     )
 
 
@@ -136,6 +143,17 @@ def _help_text() -> str:
     )
 
 
+def compose_update_reply(settings: Settings, user_text: str, compiled: CompiledPreference, updated_profile) -> str:
+    fallback = _render_update_reply(compiled.mode, compiled.patch, updated_profile)
+    if not settings.has_openai:
+        return fallback
+    try:
+        return _render_update_reply_with_llm(settings, user_text, compiled, updated_profile, fallback)
+    except Exception as exc:
+        LOGGER.warning("自然语言偏好回复生成失败，降级到模板回复: %s", exc)
+        return fallback
+
+
 def _render_update_reply(mode: str, patch, updated_profile) -> str:
     lines: List[str] = ["已更新偏好，下次日报会按新画像排序。", "解析方式: {0}".format(mode)]
     if patch.add_focus_topics:
@@ -159,3 +177,67 @@ def _render_update_reply(mode: str, patch, updated_profile) -> str:
         lines.append("探索位: {0}".format(patch.exploration_slots))
     lines.append("当前重点来源: {0}".format("、".join(updated_profile.preferred_sources) or "未设置"))
     return "\n".join(lines)
+
+
+def _render_update_reply_with_llm(
+    settings: Settings,
+    user_text: str,
+    compiled: CompiledPreference,
+    updated_profile,
+    fallback: str,
+) -> str:
+    session = requests.Session()
+    url = settings.openai_base_url.rstrip("/") + "/chat/completions"
+    prompt = (
+        "你是 VC 信息 Agent 的飞书机器人。"
+        "请根据用户刚刚的偏好描述和系统解析结果，回复一段自然语言中文确认消息。"
+        "要求：100 字以内，语气自然、简洁，不要使用 markdown 列表，不要编造未发生的改动，"
+        "要明确说明已更新偏好并且会影响下一次日报。"
+    )
+    content = {
+        "user_text": user_text,
+        "mode": compiled.mode,
+        "patch": {
+            "add_focus_topics": compiled.patch.add_focus_topics,
+            "add_preferred_sources": compiled.patch.add_preferred_sources,
+            "add_blocked_sources": compiled.patch.add_blocked_sources,
+            "add_blocked_keywords": compiled.patch.add_blocked_keywords,
+            "topic_weight_overrides": compiled.patch.topic_weight_overrides,
+            "source_weight_overrides": compiled.patch.source_weight_overrides,
+            "keyword_weight_overrides": compiled.patch.keyword_weight_overrides,
+            "max_brief_items": compiled.patch.max_brief_items,
+            "exploration_slots": compiled.patch.exploration_slots,
+            "rationale": compiled.patch.rationale,
+        },
+        "updated_profile": {
+            "focus_topics": updated_profile.focus_topics,
+            "preferred_sources": updated_profile.preferred_sources,
+            "blocked_sources": updated_profile.blocked_sources,
+            "blocked_keywords": updated_profile.blocked_keywords,
+            "max_brief_items": updated_profile.max_brief_items,
+            "exploration_slots": updated_profile.exploration_slots,
+        },
+        "fallback": fallback,
+    }
+    response = session.post(
+        url,
+        headers={
+            "Authorization": "Bearer {0}".format(settings.openai_api_key),
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": settings.openai_model,
+            "temperature": 0.3,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": json.dumps(content, ensure_ascii=False)},
+            ],
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    message = payload["choices"][0]["message"]["content"].strip()
+    if not message:
+        raise ValueError("LLM reply is empty")
+    return compact_sentence(message, limit=120)
