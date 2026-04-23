@@ -75,9 +75,19 @@ def test_schedule_message_can_show_current_plan(tmp_path):
 
 
 def test_generate_now_request_detection():
-    assert looks_like_generate_now_request(_make_body("现在生成日报"))
-    assert looks_like_generate_now_request(_make_body("现在就帮我重新生成日报吧"))
-    assert not looks_like_generate_now_request(_make_body("查看当前偏好"))
+    settings = _settings(Path("/tmp"))
+    assert looks_like_generate_now_request(settings, _make_body("现在生成日报"))
+    assert looks_like_generate_now_request(settings, _make_body("现在就帮我重新生成日报吧"))
+    assert not looks_like_generate_now_request(settings, _make_body("查看当前偏好"))
+
+
+def test_handle_schedule_message_can_trigger_generate_now(tmp_path):
+    settings = _settings(Path(tmp_path))
+
+    result = handle_schedule_message(settings, _make_body("现在就帮我重新生成日报吧"))
+
+    assert result.handled is True
+    assert result.trigger_generate_now is True
 
 
 def test_preference_followup_detection():

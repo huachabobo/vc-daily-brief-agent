@@ -13,7 +13,6 @@ from vc_agent.feedback.message_preferences import (
 )
 from vc_agent.feedback.schedule_commands import (
     handle_schedule_message,
-    looks_like_generate_now_request,
     looks_like_preference_followup,
 )
 from vc_agent.feedback.processing import (
@@ -116,12 +115,12 @@ def serve_long_connection(settings: Settings) -> None:
         LOGGER.info("收到飞书消息事件。preview=%s", text)
         try:
             chat_id = _extract_chat_id(body)
-            if looks_like_generate_now_request(body):
-                _handle_generate_now_request(settings, notifier, chat_id)
-                return
             text_message = _extract_text_message(body)
             schedule_result = handle_schedule_message(settings, body)
             if schedule_result.handled:
+                if schedule_result.trigger_generate_now:
+                    _handle_generate_now_request(settings, notifier, chat_id)
+                    return
                 if not chat_id:
                     LOGGER.warning("飞书消息缺少 chat_id，无法回复调度设置。body=%s", body)
                     return
