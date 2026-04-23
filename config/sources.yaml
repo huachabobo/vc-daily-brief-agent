@@ -1,0 +1,24 @@
+sources:
+  - name: "AI Explained"
+    channel_id: "UCNJ1Ymd5yFuUPtn21xtRbbw"
+    seed_weight: 1.2
+    topics: ["AI"]
+    active: true
+
+  - name: "Asianometry"
+    channel_id: "UC1LpsuAUaKoMzzJSEt5WImw"
+    seed_weight: 1.1
+    topics: ["芯片"]
+    active: true
+
+  - name: "NVIDIA"
+    channel_id: "UCHuiy8bXnmK5nisYHUd1J5g"
+    seed_weight: 1.15
+    topics: ["芯片", "AI"]
+    active: true
+
+  - name: "Agility"
+    channel_id: "UCN-StetwWuVYf-MU2_NVj4A"
+    seed_weight: 1.1
+    topics: ["机器人"]
+    active: true

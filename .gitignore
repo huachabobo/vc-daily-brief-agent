@@ -1,0 +1,8 @@
+.env
+.pytest_cache/
+__pycache__/
+.DS_Store
+data/*.db
+sample_output/*_brief.md
+!sample_output/2026-04-23_brief.md
+!sample_output/2026-04-23_mock.md

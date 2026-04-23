@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Dict, List
+
+import yaml
+
+from vc_agent.briefing import build_daily_brief, select_brief_items
+from vc_agent.connectors.youtube import YouTubeConnector
+from vc_agent.delivery.feishu import FeishuNotifier
+from vc_agent.domain import Item, SourceConfig
+from vc_agent.llm.client import SummaryClient
+from vc_agent.ranking.dedup import deduplicate
+from vc_agent.ranking.rules import build_item, classify_topic, infer_source_topic, suggest_tags
+from vc_agent.settings import Settings
+from vc_agent.storage import Repository
+from vc_agent.utils.text import normalize_text
+from vc_agent.utils.time import hours_ago, to_local_date, utcnow
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def run(settings: Settings) -> Dict[str, object]:
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level, logging.INFO),
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
+    settings.ensure_runtime_dirs()
+    repo = Repository(settings.db_path)
+    repo.init_db()
+
+    sources = load_sources(settings.sources_config)
+    connector = YouTubeConnector(
+        api_key=settings.youtube_api_key,
+        max_fetch_per_source=settings.max_fetch_per_source,
+    )
+
+    primary_since = hours_ago(settings.lookback_hours)
+    fallback_since = hours_ago(settings.fallback_lookback_hours)
+
+    fetched_raw_items = connector.fetch_since(sources, primary_since.isoformat())
+    used_fallback = False
+    if not fetched_raw_items:
+        LOGGER.info("主时间窗没有新视频，自动放宽 lookback 到 %s 小时。", settings.fallback_lookback_hours)
+        fetched_raw_items = connector.fetch_since(sources, fallback_since.isoformat())
+        used_fallback = True
+
+    source_map = {source.name: source for source in sources}
+    for raw_item in fetched_raw_items:
+        raw_item_id = repo.upsert_raw_item(raw_item)
+        item = normalize_raw_item(raw_item_id, raw_item, source_map.get(raw_item.source_key))
+        repo.upsert_item(item)
+
+    candidate_since = fallback_since if used_fallback else primary_since
+    candidates = repo.list_items_since(candidate_since.isoformat())
+    if not candidates:
+        raise RuntimeError("没有可用于生成简报的候选内容，请检查频道配置或 API 权限。")
+
+    preferences = repo.load_preference_state()
+    rescored: List[Item] = []
+    for item in candidates:
+        rescored.append(build_item(item, preferences))
+    rescored = deduplicate(rescored)
+
+    summarizer = SummaryClient(settings)
+    selected = select_brief_items(
+        rescored,
+        max_items=settings.max_brief_items,
+        min_score_threshold=settings.min_score_threshold,
+        exploration_slots=settings.exploration_slots,
+    )
+    selected_ids = {item.item_id for item in selected}
+
+    for item in rescored:
+        if item.duplicate_of is None and item.item_id in selected_ids:
+            item.summary, item.why_it_matters, llm_tags = summarizer.summarize(item)
+            item.tags = llm_tags or item.tags
+            item.selected_for_brief = True
+        else:
+            item.selected_for_brief = False
+        repo.upsert_item(item)
+
+    brief_date = to_local_date(utcnow(), settings.timezone)
+    final_selected = [item for item in rescored if item.item_id in selected_ids and item.duplicate_of is None]
+    brief = build_daily_brief(brief_date, final_selected)
+    markdown_path = write_brief(settings.output_dir, brief_date, brief.markdown)
+
+    notifier = FeishuNotifier(settings)
+    delivery = notifier.send(brief)
+    repo.save_brief(
+        brief_date=brief_date,
+        markdown_path=str(markdown_path),
+        item_ids=[item.item_id for item in final_selected if item.item_id is not None],
+        sent_via=delivery.channel,
+        sent_status=delivery.status,
+        message_id=delivery.message_id,
+    )
+
+    result = {
+        "brief_date": brief_date,
+        "markdown_path": str(markdown_path),
+        "fetched_count": len(fetched_raw_items),
+        "candidate_count": len(candidates),
+        "selected_count": len(final_selected),
+        "delivery_channel": delivery.channel,
+        "delivery_status": delivery.status,
+        "used_fallback_lookback": used_fallback,
+    }
+    LOGGER.info("run completed: %s", result)
+    return result
+
+
+def load_sources(path: Path) -> List[SourceConfig]:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    sources = []
+    for entry in payload.get("sources", []):
+        sources.append(
+            SourceConfig(
+                name=entry["name"],
+                channel_id=entry["channel_id"],
+                seed_weight=float(entry.get("seed_weight", 1.0)),
+                topics=list(entry.get("topics", [])),
+                active=bool(entry.get("active", True)),
+            )
+        )
+    return sources
+
+
+def normalize_raw_item(raw_item_id: int, raw_item, source_config: SourceConfig = None) -> Item:
+    text = "{0}\n{1}".format(raw_item.title, raw_item.description)
+    normalized_text = normalize_text(text)
+    preferred_topics = source_config.topics if source_config else []
+    topic = classify_topic(normalized_text, preferred_topics)
+    if topic == "其他" and source_config:
+        topic = infer_source_topic(raw_item.source_name, preferred_topics)
+    tags = suggest_tags(normalized_text, topic)
+    return Item(
+        item_id=None,
+        raw_item_id=raw_item_id,
+        platform=raw_item.platform,
+        source_key=raw_item.source_key,
+        source_name=raw_item.source_name,
+        platform_item_id=raw_item.platform_item_id,
+        url=raw_item.url,
+        title=raw_item.title,
+        description=raw_item.description,
+        normalized_title=normalize_text(raw_item.title),
+        normalized_text=normalized_text,
+        published_at=raw_item.published_at,
+        topic=topic,
+        tags=tags,
+        seed_weight=source_config.seed_weight if source_config else 1.0,
+    )
+
+
+def write_brief(output_dir: Path, brief_date: str, content: str) -> Path:
+    output_path = output_dir / "{0}_brief.md".format(brief_date)
+    output_path.write_text(content, encoding="utf-8")
+    return output_path
