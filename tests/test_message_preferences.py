@@ -8,8 +8,7 @@ from vc_agent.profile_nlp import CompiledPreference
 from vc_agent.settings import Settings
 
 
-def test_handle_preference_message_updates_profile_and_replies(tmp_path):
-    root = tmp_path
+def _setup_repo(root: Path) -> Settings:
     (root / "config").mkdir()
     (root / "config" / "sources.yaml").write_text(
         """
@@ -35,24 +34,55 @@ sources:
     settings.sources_config = root / "config" / "sources.yaml"
     settings.user_profile_config = root / "config" / "user_profile.yaml"
     settings.openai_api_key = ""
+    return settings
 
-    body = {
+
+def _make_body(text: str) -> dict:
+    return {
         "event": {
-            "sender": {"sender_type": "user"},
+            "sender": {
+                "sender_type": "user",
+                "sender_id": {"open_id": "ou_test_user"},
+            },
             "message": {
                 "chat_type": "p2p",
                 "message_type": "text",
                 "chat_id": "oc_test_chat",
-                "content": '{"text":"更关注 AI 和机器人，优先 NVIDIA、SemiEngineering，少给我 benchmark，日报控制在 5 条"}',
+                "content": '{"text":"%s"}' % text,
             },
         }
     }
 
-    result = handle_preference_message(settings, body)
+
+def test_preference_message_creates_pending_preview(tmp_path):
+    root = Path(tmp_path)
+    settings = _setup_repo(root)
+
+    result = handle_preference_message(
+        settings,
+        _make_body("更关注 AI 和机器人，优先 NVIDIA、SemiEngineering，少给我 benchmark，日报控制在 5 条"),
+    )
+
+    assert result.should_reply is True
+    assert result.updated is False
+    assert "确认应用" in result.reply_text
+
+    saved = yaml.safe_load((root / "config" / "user_profile.yaml").read_text(encoding="utf-8"))
+    assert saved["focus_topics"] == []
+
+
+def test_confirm_message_applies_pending_update(tmp_path):
+    root = Path(tmp_path)
+    settings = _setup_repo(root)
+
+    handle_preference_message(
+        settings,
+        _make_body("更关注 AI 和机器人，优先 NVIDIA、SemiEngineering，少给我 benchmark，日报控制在 5 条"),
+    )
+    result = handle_preference_message(settings, _make_body("确认应用"))
 
     assert result.should_reply is True
     assert result.updated is True
-    assert "已更新偏好" in result.reply_text
 
     saved = yaml.safe_load((root / "config" / "user_profile.yaml").read_text(encoding="utf-8"))
     assert "AI" in saved["focus_topics"]
@@ -60,33 +90,43 @@ sources:
     assert saved["digest"]["max_items"] == 5
 
 
+def test_show_current_profile_mentions_pending(tmp_path):
+    root = Path(tmp_path)
+    settings = _setup_repo(root)
+
+    handle_preference_message(settings, _make_body("更关注 AI，优先 NVIDIA"))
+    result = handle_preference_message(settings, _make_body("查看当前偏好"))
+
+    assert result.should_reply is True
+    assert "待确认" in result.reply_text or "确认应用" in result.reply_text
+
+
+def test_undo_restores_previous_profile(tmp_path):
+    root = Path(tmp_path)
+    settings = _setup_repo(root)
+
+    handle_preference_message(settings, _make_body("更关注 AI，优先 NVIDIA，日报控制在 5 条"))
+    handle_preference_message(settings, _make_body("确认应用"))
+    result = handle_preference_message(settings, _make_body("撤销上一次偏好修改"))
+
+    assert result.should_reply is True
+    assert result.updated is True
+
+    saved = yaml.safe_load((root / "config" / "user_profile.yaml").read_text(encoding="utf-8"))
+    assert saved["focus_topics"] == []
+    assert saved["preferred_sources"] == []
+    assert saved["digest"]["max_items"] == 6
+
+
 def test_handle_preference_message_returns_help_for_non_preference_text(tmp_path):
     root = Path(tmp_path)
-    (root / "config").mkdir()
-    (root / "config" / "sources.yaml").write_text("sources: []\n", encoding="utf-8")
-    (root / "config" / "user_profile.yaml").write_text("focus_topics: []\n", encoding="utf-8")
-    settings = Settings.from_env(root)
-    settings.sources_config = root / "config" / "sources.yaml"
-    settings.user_profile_config = root / "config" / "user_profile.yaml"
-    settings.openai_api_key = ""
+    settings = _setup_repo(root)
 
-    body = {
-        "event": {
-            "sender": {"sender_type": "user"},
-            "message": {
-                "chat_type": "p2p",
-                "message_type": "text",
-                "chat_id": "oc_test_chat",
-                "content": '{"text":"你好"}',
-            },
-        }
-    }
-
-    result = handle_preference_message(settings, body)
+    result = handle_preference_message(settings, _make_body("你好"))
 
     assert result.should_reply is True
     assert result.updated is False
-    assert "自然语言更新偏好" in result.reply_text or "支持用自然语言更新偏好" in result.reply_text
+    assert "查看当前偏好" in result.reply_text or "偏好" in result.reply_text
 
 
 def test_compose_update_reply_falls_back_without_openai(tmp_path):
@@ -100,7 +140,7 @@ def test_compose_update_reply_falls_back_without_openai(tmp_path):
             patch=UserProfilePatch(add_focus_topics=["AI"], max_brief_items=5, rationale="test"),
             mode="heuristic",
         ),
-        type("Profile", (), {"preferred_sources": ["NVIDIA"]})(),
+        type("Profile", (), {"preferred_sources": ["NVIDIA"], "focus_topics": ["AI"], "blocked_topics": [], "blocked_sources": [], "blocked_keywords": [], "topic_weight_overrides": {}, "source_weight_overrides": {}, "keyword_weight_overrides": {}, "max_brief_items": 5, "exploration_slots": 1})(),
     )
 
     assert "已更新偏好" in reply

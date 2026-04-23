@@ -48,6 +48,10 @@ def load_user_profile(path: Path) -> UserProfile:
     if not path.exists():
         return UserProfile()
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return profile_from_payload(payload)
+
+
+def profile_from_payload(payload: dict) -> UserProfile:
     digest = payload.get("digest") or {}
     weight_overrides = payload.get("weight_overrides") or {}
     return UserProfile(
@@ -64,7 +68,7 @@ def load_user_profile(path: Path) -> UserProfile:
     )
 
 
-def save_user_profile(path: Path, profile: UserProfile) -> None:
+def profile_to_payload(profile: UserProfile) -> dict:
     payload = {
         "focus_topics": list(profile.focus_topics),
         "blocked_topics": list(profile.blocked_topics),
@@ -83,8 +87,55 @@ def save_user_profile(path: Path, profile: UserProfile) -> None:
     }
     if any(weight_overrides.values()):
         payload["weight_overrides"] = {key: value for key, value in weight_overrides.items() if value}
+    return payload
+
+
+def save_user_profile(path: Path, profile: UserProfile) -> None:
+    payload = profile_to_payload(profile)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def patch_from_payload(payload: dict) -> UserProfilePatch:
+    return UserProfilePatch(
+        add_focus_topics=_coerce_string_list(payload.get("add_focus_topics")),
+        remove_focus_topics=_coerce_string_list(payload.get("remove_focus_topics")),
+        add_blocked_topics=_coerce_string_list(payload.get("add_blocked_topics")),
+        remove_blocked_topics=_coerce_string_list(payload.get("remove_blocked_topics")),
+        add_preferred_sources=_coerce_string_list(payload.get("add_preferred_sources")),
+        remove_preferred_sources=_coerce_string_list(payload.get("remove_preferred_sources")),
+        add_blocked_sources=_coerce_string_list(payload.get("add_blocked_sources")),
+        remove_blocked_sources=_coerce_string_list(payload.get("remove_blocked_sources")),
+        add_blocked_keywords=_coerce_string_list(payload.get("add_blocked_keywords")),
+        remove_blocked_keywords=_coerce_string_list(payload.get("remove_blocked_keywords")),
+        topic_weight_overrides=_coerce_weight_map(payload.get("topic_weight_overrides")),
+        source_weight_overrides=_coerce_weight_map(payload.get("source_weight_overrides")),
+        keyword_weight_overrides=_coerce_weight_map(payload.get("keyword_weight_overrides")),
+        max_brief_items=_optional_int(payload.get("max_brief_items")),
+        exploration_slots=_optional_int(payload.get("exploration_slots")),
+        rationale=str(payload.get("rationale") or "").strip(),
+    )
+
+
+def patch_to_payload(patch: UserProfilePatch) -> dict:
+    return {
+        "add_focus_topics": list(patch.add_focus_topics),
+        "remove_focus_topics": list(patch.remove_focus_topics),
+        "add_blocked_topics": list(patch.add_blocked_topics),
+        "remove_blocked_topics": list(patch.remove_blocked_topics),
+        "add_preferred_sources": list(patch.add_preferred_sources),
+        "remove_preferred_sources": list(patch.remove_preferred_sources),
+        "add_blocked_sources": list(patch.add_blocked_sources),
+        "remove_blocked_sources": list(patch.remove_blocked_sources),
+        "add_blocked_keywords": list(patch.add_blocked_keywords),
+        "remove_blocked_keywords": list(patch.remove_blocked_keywords),
+        "topic_weight_overrides": _serialize_weight_map(patch.topic_weight_overrides),
+        "source_weight_overrides": _serialize_weight_map(patch.source_weight_overrides),
+        "keyword_weight_overrides": _serialize_weight_map(patch.keyword_weight_overrides),
+        "max_brief_items": patch.max_brief_items,
+        "exploration_slots": patch.exploration_slots,
+        "rationale": patch.rationale,
+    }
 
 
 def merge_profile_patch(profile: UserProfile, patch: UserProfilePatch) -> UserProfile:
@@ -196,6 +247,17 @@ def _coerce_weight_map(value: object) -> Dict[str, float]:
             continue
         weights[str(key)] = _clip_weight(raw)
     return {key: weight for key, weight in weights.items() if weight}
+
+
+def _coerce_string_list(value: object) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    values = []
+    for item in value:
+        text = str(item).strip()
+        if text and text not in values:
+            values.append(text)
+    return values
 
 
 def _serialize_weight_map(value: Dict[str, float]) -> Dict[str, float]:
