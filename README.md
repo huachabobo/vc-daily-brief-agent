@@ -1,6 +1,14 @@
 # VC 信息聚合 Agent
 
+[![pytest](https://github.com/huachabobo/vc-daily-brief-agent/actions/workflows/pytest.yml/badge.svg)](https://github.com/huachabobo/vc-daily-brief-agent/actions/workflows/pytest.yml)
+
 面向 VC 合伙人的信息聚合 Agent 原型。这个项目优先解决四件事：抓到真实内容、过滤噪音、生成手机友好的日报、把用户反馈回写到下一轮排序。
+
+## Preview
+
+![Daily brief preview](docs/assets/brief-preview.png)
+
+![Feishu feedback preview](docs/assets/feedback-preview.png)
 
 ## 体验亮点
 
