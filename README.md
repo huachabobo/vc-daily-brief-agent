@@ -203,6 +203,14 @@ curl -X POST http://127.0.0.1:8787/feishu/callback \
 - `FEISHU_RECEIVE_ID_TYPE=open_id|user_id|email`
 - `FEISHU_RECEIVE_ID=<对应接收者 ID>`
 
+如果你在飞书私聊里直接给机器人发文本消息，也可以更新偏好。例如：
+
+```text
+更关注 AI infra 和机器人商业化落地，优先 NVIDIA、SemiEngineering，少给我纯学术 benchmark，日报控制在 5 条。
+```
+
+机器人会自动把这段话编译成画像 patch，并回复本次更新结果。
+
 ## 测试
 
 ```bash

@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any
 
+from vc_agent.delivery.feishu import FeishuNotifier
+from vc_agent.feedback.message_preferences import handle_preference_message
 from vc_agent.feedback.processing import (
     FeedbackNotFoundError,
     FeedbackValidationError,
@@ -34,6 +36,7 @@ def serve_long_connection(settings: Settings) -> None:
 
     repo = Repository(settings.db_path)
     repo.init_db()
+    notifier = FeishuNotifier(settings)
 
     def do_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
         body = json.loads(lark.JSON.marshal(data))
@@ -73,8 +76,20 @@ def serve_long_connection(settings: Settings) -> None:
             )
 
     def do_message_receive(data: P2ImMessageReceiveV1) -> None:
+        body = json.loads(lark.JSON.marshal(data))
         text = _safe_message_preview(data)
-        LOGGER.info("收到飞书消息事件，已忽略。preview=%s", text)
+        LOGGER.info("收到飞书消息事件。preview=%s", text)
+        try:
+            result = handle_preference_message(settings, body)
+            if not result.should_reply:
+                return
+            chat_id = _extract_chat_id(body)
+            if not chat_id:
+                LOGGER.warning("飞书消息缺少 chat_id，无法回复。body=%s", body)
+                return
+            notifier.send_text_message("chat_id", chat_id, result.reply_text)
+        except Exception:
+            LOGGER.exception("飞书长连接处理文本消息失败。")
 
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")
@@ -114,3 +129,7 @@ def _safe_message_preview(data: Any) -> str:
     except Exception:
         pass
     return ""
+
+
+def _extract_chat_id(body: dict[str, Any]) -> str:
+    return str(body.get("event", {}).get("message", {}).get("chat_id") or "")

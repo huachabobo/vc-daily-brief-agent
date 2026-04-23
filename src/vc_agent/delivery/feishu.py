@@ -114,6 +114,33 @@ class FeishuNotifier:
             raise RuntimeError(payload.get("msg", "failed to get tenant access token"))
         return payload["tenant_access_token"]
 
+    def send_text_message(self, receive_id_type: str, receive_id: str, text: str) -> DeliveryResult:
+        if not self.settings.feishu_app_id or not self.settings.feishu_app_secret:
+            raise RuntimeError("飞书文本回复需要 FEISHU_APP_ID 和 FEISHU_APP_SECRET。")
+        token = self._tenant_access_token()
+        response = self.session.post(
+            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={0}".format(receive_id_type),
+            headers={
+                "Authorization": "Bearer {0}".format(token),
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={
+                "receive_id": receive_id,
+                "msg_type": "text",
+                "content": json.dumps({"text": text}, ensure_ascii=False),
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if body.get("code") not in (None, 0):
+            raise RuntimeError(body.get("msg", "feishu app text send failed"))
+        message_id = None
+        data = body.get("data") or {}
+        if isinstance(data, dict):
+            message_id = data.get("message_id")
+        return DeliveryResult(channel="app:{0}".format(receive_id_type), status="sent", message_id=message_id)
+
     def _build_card(self, brief: DailyBrief) -> dict:
         elements = [
             {
