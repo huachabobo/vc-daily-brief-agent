@@ -57,6 +57,16 @@ def test_profile_adjustment_boosts_focus_topic_and_preferred_source():
     assert "用户偏好来源" in updated.reasons
 
 
+def test_profile_adjustment_supports_freeform_preferred_keywords():
+    profile = UserProfile(preferred_keywords=["customer validation", "供应链"])
+    item = make_item(text="customer validation and 供应链 progress")
+
+    updated = apply_profile_adjustments(item, profile)
+
+    assert updated.score > 1.0
+    assert "用户偏好关键词" in updated.reasons
+
+
 def test_profile_adjustment_supports_explicit_weight_overrides():
     profile = UserProfile(
         topic_weight_overrides={"芯片": 0.12},
@@ -85,6 +95,7 @@ def test_merge_profile_patch_updates_lists_and_weights():
     profile = UserProfile(
         focus_topics=["AI"],
         preferred_sources=["NVIDIA"],
+        preferred_keywords=["商业化落地"],
         keyword_weight_overrides={"benchmark": -0.08},
         max_brief_items=6,
         exploration_slots=1,
@@ -92,6 +103,7 @@ def test_merge_profile_patch_updates_lists_and_weights():
     patch = UserProfilePatch(
         add_focus_topics=["机器人"],
         add_preferred_sources=["SemiEngineering"],
+        add_preferred_keywords=["客户验证"],
         topic_weight_overrides={"机器人": 0.11},
         source_weight_overrides={"SemiEngineering": 0.12},
         keyword_weight_overrides={"academic": -0.1, "benchmark": 0.0},
@@ -102,6 +114,7 @@ def test_merge_profile_patch_updates_lists_and_weights():
 
     assert merged.focus_topics == ["AI", "机器人"]
     assert merged.preferred_sources == ["NVIDIA", "SemiEngineering"]
+    assert merged.preferred_keywords == ["商业化落地", "客户验证"]
     assert merged.topic_weight_overrides["机器人"] == 0.11
     assert merged.source_weight_overrides["SemiEngineering"] == 0.12
     assert "benchmark" not in merged.keyword_weight_overrides
@@ -112,6 +125,7 @@ def test_save_and_load_profile_preserves_weight_overrides(tmp_path):
     path = tmp_path / "user_profile.yaml"
     profile = UserProfile(
         focus_topics=["AI"],
+        preferred_keywords=["客户验证"],
         topic_weight_overrides={"AI": 0.09},
         source_weight_overrides={"NVIDIA": 0.12},
         keyword_weight_overrides={"benchmark": -0.08},
@@ -123,6 +137,7 @@ def test_save_and_load_profile_preserves_weight_overrides(tmp_path):
     loaded = load_user_profile(path)
 
     assert loaded.focus_topics == ["AI"]
+    assert loaded.preferred_keywords == ["客户验证"]
     assert loaded.topic_weight_overrides == {"AI": 0.09}
     assert loaded.source_weight_overrides == {"NVIDIA": 0.12}
     assert loaded.keyword_weight_overrides == {"benchmark": -0.08}

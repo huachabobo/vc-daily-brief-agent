@@ -15,6 +15,7 @@ class UserProfile:
     focus_topics: List[str] = field(default_factory=list)
     blocked_topics: List[str] = field(default_factory=list)
     preferred_sources: List[str] = field(default_factory=list)
+    preferred_keywords: List[str] = field(default_factory=list)
     blocked_sources: List[str] = field(default_factory=list)
     blocked_keywords: List[str] = field(default_factory=list)
     topic_weight_overrides: Dict[str, float] = field(default_factory=dict)
@@ -32,6 +33,8 @@ class UserProfilePatch:
     remove_blocked_topics: List[str] = field(default_factory=list)
     add_preferred_sources: List[str] = field(default_factory=list)
     remove_preferred_sources: List[str] = field(default_factory=list)
+    add_preferred_keywords: List[str] = field(default_factory=list)
+    remove_preferred_keywords: List[str] = field(default_factory=list)
     add_blocked_sources: List[str] = field(default_factory=list)
     remove_blocked_sources: List[str] = field(default_factory=list)
     add_blocked_keywords: List[str] = field(default_factory=list)
@@ -58,6 +61,7 @@ def profile_from_payload(payload: dict) -> UserProfile:
         focus_topics=list(payload.get("focus_topics") or []),
         blocked_topics=list(payload.get("blocked_topics") or []),
         preferred_sources=list(payload.get("preferred_sources") or []),
+        preferred_keywords=list(payload.get("preferred_keywords") or []),
         blocked_sources=list(payload.get("blocked_sources") or []),
         blocked_keywords=list(payload.get("blocked_keywords") or []),
         topic_weight_overrides=_coerce_weight_map(weight_overrides.get("topics")),
@@ -73,6 +77,7 @@ def profile_to_payload(profile: UserProfile) -> dict:
         "focus_topics": list(profile.focus_topics),
         "blocked_topics": list(profile.blocked_topics),
         "preferred_sources": list(profile.preferred_sources),
+        "preferred_keywords": list(profile.preferred_keywords),
         "blocked_sources": list(profile.blocked_sources),
         "blocked_keywords": list(profile.blocked_keywords),
         "digest": {
@@ -104,6 +109,8 @@ def patch_from_payload(payload: dict) -> UserProfilePatch:
         remove_blocked_topics=_coerce_string_list(payload.get("remove_blocked_topics")),
         add_preferred_sources=_coerce_string_list(payload.get("add_preferred_sources")),
         remove_preferred_sources=_coerce_string_list(payload.get("remove_preferred_sources")),
+        add_preferred_keywords=_coerce_string_list(payload.get("add_preferred_keywords")),
+        remove_preferred_keywords=_coerce_string_list(payload.get("remove_preferred_keywords")),
         add_blocked_sources=_coerce_string_list(payload.get("add_blocked_sources")),
         remove_blocked_sources=_coerce_string_list(payload.get("remove_blocked_sources")),
         add_blocked_keywords=_coerce_string_list(payload.get("add_blocked_keywords")),
@@ -125,6 +132,8 @@ def patch_to_payload(patch: UserProfilePatch) -> dict:
         "remove_blocked_topics": list(patch.remove_blocked_topics),
         "add_preferred_sources": list(patch.add_preferred_sources),
         "remove_preferred_sources": list(patch.remove_preferred_sources),
+        "add_preferred_keywords": list(patch.add_preferred_keywords),
+        "remove_preferred_keywords": list(patch.remove_preferred_keywords),
         "add_blocked_sources": list(patch.add_blocked_sources),
         "remove_blocked_sources": list(patch.remove_blocked_sources),
         "add_blocked_keywords": list(patch.add_blocked_keywords),
@@ -146,6 +155,11 @@ def merge_profile_patch(profile: UserProfile, patch: UserProfilePatch) -> UserPr
             profile.preferred_sources,
             patch.add_preferred_sources,
             patch.remove_preferred_sources,
+        ),
+        preferred_keywords=_merge_list(
+            profile.preferred_keywords,
+            patch.add_preferred_keywords,
+            patch.remove_preferred_keywords,
         ),
         blocked_sources=_merge_list(profile.blocked_sources, patch.add_blocked_sources, patch.remove_blocked_sources),
         blocked_keywords=_merge_list(
@@ -201,6 +215,17 @@ def score_profile_adjustments(item: Item, profile: UserProfile) -> Tuple[float, 
         delta += 0.1
         reasons.append("用户偏好来源")
 
+    preferred_keyword_hits = []
+    text = item.normalized_text or normalize_text("{0} {1}".format(item.title, item.description))
+    for keyword in profile.preferred_keywords:
+        normalized_keyword = normalize_text(keyword)
+        if normalized_keyword and normalized_keyword in text:
+            preferred_keyword_hits.append(keyword)
+    if preferred_keyword_hits:
+        keyword_bonus = min(len(preferred_keyword_hits) * 0.06, 0.24)
+        delta += keyword_bonus
+        reasons.append("用户偏好关键词")
+
     topic_weight = _clip_weight(profile.topic_weight_overrides.get(item.topic, 0.0))
     if topic_weight:
         delta += topic_weight
@@ -211,7 +236,6 @@ def score_profile_adjustments(item: Item, profile: UserProfile) -> Tuple[float, 
         delta += source_weight
         reasons.append("用户来源权重 {0:+.2f}".format(source_weight))
 
-    text = item.normalized_text or normalize_text("{0} {1}".format(item.title, item.description))
     keyword_total = 0.0
     for keyword, weight in profile.keyword_weight_overrides.items():
         normalized_keyword = normalize_text(keyword)

@@ -173,7 +173,7 @@ def test_compose_update_reply_falls_back_without_openai(tmp_path):
             patch=UserProfilePatch(add_focus_topics=["AI"], max_brief_items=5, rationale="test"),
             mode="heuristic",
         ),
-        type("Profile", (), {"preferred_sources": ["NVIDIA"], "focus_topics": ["AI"], "blocked_topics": [], "blocked_sources": [], "blocked_keywords": [], "topic_weight_overrides": {}, "source_weight_overrides": {}, "keyword_weight_overrides": {}, "max_brief_items": 5, "exploration_slots": 1})(),
+        type("Profile", (), {"preferred_sources": ["NVIDIA"], "preferred_keywords": [], "focus_topics": ["AI"], "blocked_topics": [], "blocked_sources": [], "blocked_keywords": [], "topic_weight_overrides": {}, "source_weight_overrides": {}, "keyword_weight_overrides": {}, "max_brief_items": 5, "exploration_slots": 1})(),
     )
 
     assert "已更新偏好" in reply

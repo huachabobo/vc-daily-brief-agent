@@ -42,6 +42,7 @@ def run_profile_update(repo_root: Path, argv: List[str] | None = None) -> int:
                 "focus_topics": updated_profile.focus_topics,
                 "blocked_topics": updated_profile.blocked_topics,
                 "preferred_sources": updated_profile.preferred_sources,
+                "preferred_keywords": updated_profile.preferred_keywords,
                 "blocked_sources": updated_profile.blocked_sources,
                 "blocked_keywords": updated_profile.blocked_keywords,
                 "topic_weight_overrides": updated_profile.topic_weight_overrides,

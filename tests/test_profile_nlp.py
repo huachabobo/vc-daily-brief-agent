@@ -22,3 +22,21 @@ def test_preference_compiler_heuristics_extracts_preferences(tmp_path):
     assert compiled.patch.keyword_weight_overrides["benchmark"] < 0
     assert compiled.patch.max_brief_items == 5
     assert compiled.patch.exploration_slots == 1
+
+
+def test_preference_compiler_heuristics_extracts_freeform_preferred_keywords(tmp_path):
+    settings = Settings.from_env(tmp_path)
+    settings.openai_api_key = ""
+    compiler = PreferenceCompiler(settings)
+
+    compiled = compiler.compile(
+        "我想多看客户验证、商业化落地和供应链，少给我 benchmark。",
+        current_profile=UserProfile(),
+        available_topics=["AI", "芯片", "机器人"],
+        available_sources=["NVIDIA", "SemiEngineering", "The Robot Report"],
+    )
+
+    assert compiled.mode == "heuristic"
+    assert "客户验证" in compiled.patch.add_preferred_keywords
+    assert "商业化落地" in compiled.patch.add_preferred_keywords
+    assert "供应链" in compiled.patch.add_preferred_keywords

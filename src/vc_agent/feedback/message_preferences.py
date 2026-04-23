@@ -347,6 +347,8 @@ def _render_update_reply(mode: str, patch, updated_profile: UserProfile) -> str:
         lines.append("关注赛道: {0}".format("、".join(patch.add_focus_topics)))
     if patch.add_preferred_sources:
         lines.append("优先来源: {0}".format("、".join(patch.add_preferred_sources)))
+    if patch.add_preferred_keywords:
+        lines.append("偏好关键词: {0}".format("、".join(patch.add_preferred_keywords)))
     if patch.add_blocked_sources:
         lines.append("屏蔽来源: {0}".format("、".join(patch.add_blocked_sources)))
     if patch.add_blocked_keywords:
@@ -372,6 +374,8 @@ def _render_preview_reply(mode: str, patch, current_profile: UserProfile) -> str
         lines.append("你想更关注 {0}。".format("、".join(patch.add_focus_topics)))
     if patch.add_preferred_sources:
         lines.append("你想优先看 {0}。".format("、".join(patch.add_preferred_sources)))
+    if patch.add_preferred_keywords:
+        lines.append("你尤其想多看 {0}。".format("、".join(patch.add_preferred_keywords)))
     if patch.add_blocked_sources:
         lines.append("你想屏蔽 {0}。".format("、".join(patch.add_blocked_sources)))
     lowered = [key for key, value in patch.keyword_weight_overrides.items() if value < 0]
@@ -396,6 +400,8 @@ def _render_profile_summary_reply(profile: UserProfile, pending: Optional[Pendin
     lines = ["当前你的偏好大致是这样："]
     lines.append("重点赛道: {0}".format("、".join(profile.focus_topics) or "未设置"))
     lines.append("优先来源: {0}".format("、".join(profile.preferred_sources) or "未设置"))
+    if profile.preferred_keywords:
+        lines.append("偏好关键词: {0}".format("、".join(profile.preferred_keywords)))
     if profile.blocked_sources:
         lines.append("屏蔽来源: {0}".format("、".join(profile.blocked_sources)))
     if profile.blocked_keywords:
@@ -413,6 +419,7 @@ def _render_undo_reply(restored_profile: UserProfile) -> str:
             "已撤销上一次偏好修改，后续推荐会回到之前的画像设置。",
             "当前重点赛道: {0}".format("、".join(restored_profile.focus_topics) or "未设置"),
             "当前重点来源: {0}".format("、".join(restored_profile.preferred_sources) or "未设置"),
+            "当前偏好关键词: {0}".format("、".join(restored_profile.preferred_keywords) or "未设置"),
         ]
     )
 
@@ -460,6 +467,7 @@ def _compiled_patch_payload(patch) -> dict:
     return {
         "add_focus_topics": patch.add_focus_topics,
         "add_preferred_sources": patch.add_preferred_sources,
+        "add_preferred_keywords": patch.add_preferred_keywords,
         "add_blocked_sources": patch.add_blocked_sources,
         "add_blocked_keywords": patch.add_blocked_keywords,
         "topic_weight_overrides": patch.topic_weight_overrides,
@@ -476,6 +484,7 @@ def _profile_summary_payload(profile: UserProfile) -> dict:
         "focus_topics": profile.focus_topics,
         "blocked_topics": profile.blocked_topics,
         "preferred_sources": profile.preferred_sources,
+        "preferred_keywords": profile.preferred_keywords,
         "blocked_sources": profile.blocked_sources,
         "blocked_keywords": profile.blocked_keywords,
         "topic_weight_overrides": profile.topic_weight_overrides,
@@ -576,6 +585,9 @@ def _looks_like_preference(text: str) -> bool:
         return True
     markers = [
         "关注",
+        "喜欢看",
+        "想看",
+        "多来点",
         "优先",
         "少给我",
         "少看",
@@ -604,6 +616,8 @@ def _patch_has_effect(patch) -> bool:
             patch.remove_blocked_topics,
             patch.add_preferred_sources,
             patch.remove_preferred_sources,
+            patch.add_preferred_keywords,
+            patch.remove_preferred_keywords,
             patch.add_blocked_sources,
             patch.remove_blocked_sources,
             patch.add_blocked_keywords,

@@ -61,14 +61,15 @@ class PreferenceCompiler:
             "你是推荐系统的偏好编译器。把用户的自然语言偏好翻译成 JSON patch。"
             "只输出 JSON。字段必须使用："
             "add_focus_topics, remove_focus_topics, add_blocked_topics, remove_blocked_topics, "
-            "add_preferred_sources, remove_preferred_sources, add_blocked_sources, remove_blocked_sources, "
+            "add_preferred_sources, remove_preferred_sources, add_preferred_keywords, remove_preferred_keywords, "
+            "add_blocked_sources, remove_blocked_sources, "
             "add_blocked_keywords, remove_blocked_keywords, topic_weight_overrides, source_weight_overrides, "
             "keyword_weight_overrides, max_brief_items, exploration_slots, rationale。"
             "topic/source 权重范围 -0.2 到 0.2，正数表示提升，负数表示降权。"
             "只有在用户明确表达‘不要看/屏蔽’时才使用 blocked_*；"
-            "‘多关注/少给我’优先翻译成 focus/preferred 或 weight_overrides。"
+            "‘多关注/少给我’优先翻译成 focus/preferred/preferred_keywords 或 weight_overrides。"
             "max_brief_items 只在用户明确提到条数时填写；exploration_slots 只在用户明确提到探索位时填写。"
-            "优先使用给定的 canonical topic/source 名称。"
+            "优先使用给定的 canonical topic/source 名称；如果用户强调的是任意细分主题、风格、信号或短语，也可以写入 preferred_keywords。"
         )
         content = {
             "user_text": text,
@@ -78,6 +79,7 @@ class PreferenceCompiler:
                 "focus_topics": current_profile.focus_topics,
                 "blocked_topics": current_profile.blocked_topics,
                 "preferred_sources": current_profile.preferred_sources,
+                "preferred_keywords": current_profile.preferred_keywords,
                 "blocked_sources": current_profile.blocked_sources,
                 "blocked_keywords": current_profile.blocked_keywords,
                 "topic_weight_overrides": current_profile.topic_weight_overrides,
@@ -133,9 +135,10 @@ class PreferenceCompiler:
                     patch.add_preferred_sources.append(source)
                     patch.source_weight_overrides[source] = 0.1
 
-        for raw_chunk in _extract_keyword_chunks(text, ("多给我", "更关注", "优先", "多看")):
+        for raw_chunk in _extract_keyword_chunks(text, ("多给我", "更关注", "优先", "多看", "想看", "喜欢看", "重点看", "想多看")):
             for keyword in _split_keywords(raw_chunk):
-                patch.keyword_weight_overrides[keyword] = 0.08
+                if keyword not in patch.add_preferred_keywords:
+                    patch.add_preferred_keywords.append(keyword)
 
         for raw_chunk in _extract_keyword_chunks(text, ("少给我", "少看", "降低", "弱化")):
             for keyword in _split_keywords(raw_chunk):
@@ -165,6 +168,7 @@ def render_patch_summary(compiled: CompiledPreference) -> str:
         ("新增 focus_topics", patch.add_focus_topics),
         ("移除 focus_topics", patch.remove_focus_topics),
         ("新增 preferred_sources", patch.add_preferred_sources),
+        ("新增 preferred_keywords", patch.add_preferred_keywords),
         ("新增 blocked_sources", patch.add_blocked_sources),
         ("新增 blocked_keywords", patch.add_blocked_keywords),
     ):
@@ -193,6 +197,8 @@ def _sanitize_patch(payload: Dict[str, object], available_topics: List[str], ava
         remove_blocked_topics=_map_labels(payload.get("remove_blocked_topics"), topic_lookup),
         add_preferred_sources=_map_labels(payload.get("add_preferred_sources"), source_lookup),
         remove_preferred_sources=_map_labels(payload.get("remove_preferred_sources"), source_lookup),
+        add_preferred_keywords=_coerce_str_list(payload.get("add_preferred_keywords")),
+        remove_preferred_keywords=_coerce_str_list(payload.get("remove_preferred_keywords")),
         add_blocked_sources=_map_labels(payload.get("add_blocked_sources"), source_lookup),
         remove_blocked_sources=_map_labels(payload.get("remove_blocked_sources"), source_lookup),
         add_blocked_keywords=_coerce_str_list(payload.get("add_blocked_keywords")),

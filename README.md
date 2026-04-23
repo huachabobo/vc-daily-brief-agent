@@ -122,6 +122,7 @@ python scripts/bootstrap.py
 编辑 [config/user_profile.yaml](config/user_profile.yaml)，可以直接声明：
 - `focus_topics`
 - `preferred_sources`
+- `preferred_keywords`
 - `blocked_sources`
 - `blocked_keywords`
 - `weight_overrides.topics / sources / keywords`
@@ -132,6 +133,12 @@ python scripts/bootstrap.py
 
 ```bash
 python scripts/update_profile.py --text "我更关注 AI infra 和机器人商业化落地，优先 NVIDIA、SemiEngineering，少给我纯学术 benchmark，日报控制在 5 条。"
+```
+
+也支持完全自由的偏好短语，例如：
+
+```bash
+python scripts/update_profile.py --text "我想多看客户验证、商业化落地、供应链和开源模型，少给我纯 demo。"
 ```
 
 如果想先看 AI 会怎么改，不立刻写入文件：
