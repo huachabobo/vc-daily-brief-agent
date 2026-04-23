@@ -20,7 +20,7 @@
 - `Why selected`：每条内容都会说明为什么它被选进今日简报，强化可解释性
 - `多真实源`：当前同时接入 `YouTube` 与 `RSS/Atom`，避免只靠单一平台
 - `飞书反馈学习`：用户点击 `👍 / 👎` 后，source/topic/phrase 权重会影响下一轮排序
-- `显式用户画像`：可以在 `config/user_profile.yaml` 里直接声明重点赛道、偏好来源和屏蔽条件
+- `显式用户画像`：可以在 `config/user_profile.yaml` 里声明默认重点赛道、偏好来源和屏蔽条件；私聊用户第一次交互后会复制出自己的独立画像
 - `自然语言偏好`：可以像 ChatGPT Pulse 一样直接描述“多看什么 / 少看什么 / 简报几条”，AI 会把它编译成结构化画像 patch
 - `自然语言调度`：可以直接在飞书里说“每天早上 8 点推送日报”、“工作日 9 点、周末 10 点半推送”或“现在生成日报”；规则没命中时会再调用 LLM 做需求理解，再修改受控配置
 - `AI 工具调度`：飞书私聊消息会先由 LLM 判断要调用哪些内部工具，再按顺序执行并汇总回复，适合“一句话同时改时间、改内容、立刻生成”的复合需求
@@ -37,10 +37,10 @@
 - 真实接入 `YouTube Data API` 与 `RSS/Atom feed`
 - 基于规则做冷启动过滤、排序和去重
 - 调用 OpenAI 兼容接口生成结构化摘要，失败时降级为抽取式摘要
-- 输出 Markdown 简报到 `sample_output/`
+- 输出 Markdown 简报到 `sample_output/`；私聊用户的实时产物会写到 `sample_output/users/<user>/`
 - 支持飞书 App Bot / Webhook 发送
-- 支持飞书 `HTTP 回调` 和 `长连接` 两种反馈接收方式
-- 反馈写入 SQLite，并更新 source/topic/phrase 偏好权重
+- 支持飞书 `HTTP 回调` 和 `长连接` 两种反馈接收方式，都会按 `open_id/chat_id` 路由到对应用户运行态
+- 反馈写入 SQLite，并更新 source/topic/phrase 偏好权重；私聊用户会使用各自独立的 `db / profile / delivery preferences`
 
 ## 架构概览
 
@@ -59,9 +59,19 @@ YouTube / RSS -> Raw Store(SQLite) -> Normalize/Dedup -> Rank -> LLM Summary
 ├── README.md
 ├── design.md
 ├── config/
-│   └── sources.yaml
+│   ├── sources.yaml
+│   └── user_profile.yaml
+├── data/
+│   └── users/
+│       └── <user>/
+│           ├── delivery_preferences.json
+│           ├── user_profile.yaml
+│           └── vc_agent.db
 ├── sample_output/
-│   └── 2026-04-23_brief.md
+│   ├── 2026-04-23_brief.md
+│   └── users/
+│       └── <user>/
+│           └── 2026-04-23_brief.md
 ├── scripts/
 │   ├── run_once.py
 │   └── serve_feedback.py
@@ -119,7 +129,11 @@ python scripts/bootstrap.py
 
 4. 可选：配置用户画像
 
-编辑 [config/user_profile.yaml](config/user_profile.yaml)，可以直接声明：
+根目录的 [config/user_profile.yaml](config/user_profile.yaml) 是默认画像模板，适合：
+- CLI 单次运行
+- 作为飞书私聊用户第一次交互时的种子配置
+
+它可以直接声明：
 - `focus_topics`
 - `preferred_sources`
 - `preferred_keywords`
@@ -129,7 +143,7 @@ python scripts/bootstrap.py
 - `digest.max_items`
 - `digest.exploration_slots`
 
-也可以直接用自然语言更新画像：
+也可以直接用自然语言更新默认画像：
 
 ```bash
 python scripts/update_profile.py --text "我更关注 AI infra 和机器人商业化落地，优先 NVIDIA、SemiEngineering，少给我纯学术 benchmark，日报控制在 5 条。"
@@ -145,6 +159,14 @@ python scripts/update_profile.py --text "我想多看客户验证、商业化落
 
 ```bash
 python scripts/update_profile.py --text "更关注芯片和机器人，少看 benchmark" --dry-run
+```
+
+如果要改某个私聊用户已经迁出的画像，可以显式指定：
+
+```bash
+python scripts/update_profile.py \
+  --profile-path data/users/<user>/user_profile.yaml \
+  --text "更关注机器人商业化落地，日报控制在 5 条。"
 ```
 
 如果在飞书私聊里直接发偏好描述，机器人会先回一张偏好预览卡片。你可以直接点：
@@ -173,8 +195,8 @@ python scripts/run_once.py
 
 成功后会：
 - 抓取 YouTube / RSS 内容
-- 把原始数据和分析结果写入 `data/vc_agent.db`
-- 在 `sample_output/` 生成日报
+- 把原始数据和分析结果写入默认运行态的 `data/vc_agent.db`
+- 在默认输出目录 `sample_output/` 生成日报
 - 若配置了飞书，自动尝试发送
 
 启动反馈服务：
@@ -186,6 +208,16 @@ python scripts/serve_feedback.py
 `serve_feedback.py` 会按 `FEISHU_CALLBACK_MODE` 自动切换：
 - `long_connection`：启动飞书官方 SDK 的 WebSocket 客户端
 - `http`：启动 FastAPI，提供 `GET /health` 与 `POST /feishu/callback`
+
+如果通过飞书私聊与机器人交互，系统会为每个用户创建独立运行态：
+- `data/users/<user>/vc_agent.db`
+- `data/users/<user>/user_profile.yaml`
+- `data/users/<user>/delivery_preferences.json`
+- `sample_output/users/<user>/`
+
+这意味着：
+- 你在私聊里改偏好、改推送时间、点 `👍/👎`，只会影响自己的推荐
+- 根目录 `config/user_profile.yaml` 和 `sample_output/2026-04-23_brief.md` 主要用于默认配置与提交样例
 
 本地调试 HTTP 回调时，可直接执行：
 
@@ -265,7 +297,7 @@ pytest
 1. 先打开 [sample_output/2026-04-23_brief.md](sample_output/2026-04-23_brief.md)，说明这是一次真实运行产物。
 2. 运行 `python scripts/run_once.py`，展示抓取、筛选、摘要、发送链路。
 3. 保持 `python scripts/serve_feedback.py` 在长连接模式运行。
-4. 在飞书里点击 `👍` 或 `👎`，再查看 SQLite 中的 `feedback` 和 `preference_state`。
+4. 在飞书里点击 `👍` 或 `👎`，再查看对应用户目录下 SQLite 中的 `feedback` 和 `preference_state`。
 
 可以直接这样介绍：
 

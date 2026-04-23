@@ -58,7 +58,16 @@ class FeishuNotifier:
         body = response.json()
         if body.get("code") not in (None, 0):
             raise RuntimeError(body.get("msg", "feishu webhook send failed"))
-        return DeliveryResult(channel="webhook", status="sent", message_id=body.get("data"))
+        result = DeliveryResult(channel="webhook", status="sent", message_id=body.get("data"))
+        LOGGER.info(
+            "飞书发送成功 channel=%s brief_date=%s message_id=%s highlights=%s entries=%s",
+            result.channel,
+            brief.brief_date,
+            result.message_id,
+            len(brief.highlights),
+            sum(len(entries) for entries in brief.grouped_entries.values()),
+        )
+        return result
 
     def _send_via_app(self, brief: DailyBrief) -> DeliveryResult:
         token = self._tenant_access_token()
@@ -85,7 +94,17 @@ class FeishuNotifier:
         data = body.get("data") or {}
         if isinstance(data, dict):
             message_id = data.get("message_id")
-        return DeliveryResult(channel="app:{0}".format(receive_id_type), status="sent", message_id=message_id)
+        result = DeliveryResult(channel="app:{0}".format(receive_id_type), status="sent", message_id=message_id)
+        LOGGER.info(
+            "飞书发送成功 channel=%s brief_date=%s receive_id_type=%s message_id=%s highlights=%s entries=%s",
+            result.channel,
+            brief.brief_date,
+            receive_id_type,
+            result.message_id,
+            len(brief.highlights),
+            sum(len(entries) for entries in brief.grouped_entries.values()),
+        )
+        return result
 
     def _resolve_receive_target(self) -> tuple[str, str]:
         if self.settings.feishu_chat_id:
@@ -118,25 +137,41 @@ class FeishuNotifier:
         if not self.settings.feishu_app_id or not self.settings.feishu_app_secret:
             raise RuntimeError("飞书文本回复需要 FEISHU_APP_ID 和 FEISHU_APP_SECRET。")
         token = self._tenant_access_token()
-        return self._send_app_message(
+        result = self._send_app_message(
             token=token,
             receive_id_type=receive_id_type,
             receive_id=receive_id,
             msg_type="text",
             content={"text": text},
         )
+        LOGGER.info(
+            "飞书文本消息发送成功 channel=%s receive_id_type=%s message_id=%s chars=%s",
+            result.channel,
+            receive_id_type,
+            result.message_id,
+            len(text),
+        )
+        return result
 
     def send_interactive_message(self, receive_id_type: str, receive_id: str, card: dict) -> DeliveryResult:
         if not self.settings.feishu_app_id or not self.settings.feishu_app_secret:
             raise RuntimeError("飞书卡片回复需要 FEISHU_APP_ID 和 FEISHU_APP_SECRET。")
         token = self._tenant_access_token()
-        return self._send_app_message(
+        result = self._send_app_message(
             token=token,
             receive_id_type=receive_id_type,
             receive_id=receive_id,
             msg_type="interactive",
             content=card,
         )
+        LOGGER.info(
+            "飞书卡片消息发送成功 channel=%s receive_id_type=%s message_id=%s card_elements=%s",
+            result.channel,
+            receive_id_type,
+            result.message_id,
+            len(card.get("elements") or []),
+        )
+        return result
 
     def _send_app_message(
         self,

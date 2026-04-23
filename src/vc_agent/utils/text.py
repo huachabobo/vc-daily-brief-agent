@@ -44,7 +44,22 @@ def compact_sentence(text: str, limit: int = 120) -> str:
     clean = re.sub(r"\s+", " ", text.strip())
     if len(clean) <= limit:
         return clean
-    return clean[: limit - 1].rstrip() + "…"
+    hard_limit = max(limit - 1, 1)
+    prefix = clean[:hard_limit]
+
+    # Prefer ending on a natural sentence boundary so generated brief text
+    # reads like a polished user-facing note instead of a debug truncation.
+    for boundary in ("。", "！", "？", ";", "；", ".", "!", "?"):
+        position = prefix.rfind(boundary)
+        if position >= min(max(int(limit * 0.3), 12), hard_limit - 1):
+            return prefix[: position + 1].rstrip()
+
+    for boundary in ("，", ",", "、", " "):
+        position = prefix.rfind(boundary)
+        if position >= int(limit * 0.7):
+            return prefix[:position].rstrip() + "…"
+
+    return prefix.rstrip() + "…"
 
 
 def top_phrases(text: str, limit: int = 6) -> List[str]:

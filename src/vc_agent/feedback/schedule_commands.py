@@ -4,7 +4,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -14,11 +16,13 @@ from vc_agent.delivery_preferences import (
     WORKDAY_CODES,
     DeliverySchedule,
     DeliveryPreferences,
+    OneOffDeliveryRun,
     load_delivery_preferences,
     render_delivery_preferences,
     save_delivery_preferences,
 )
 from vc_agent.settings import Settings
+from vc_agent.utils.time import utcnow
 from vc_agent.utils.text import normalize_text
 
 
@@ -38,6 +42,7 @@ class CompiledDeliveryRequest:
     show_schedule: bool = False
     enabled: Optional[bool] = None
     schedules: list[DeliverySchedule] = field(default_factory=list)
+    one_off_runs: list[OneOffDeliveryRun] = field(default_factory=list)
     rationale: str = ""
 
 
@@ -74,11 +79,13 @@ def handle_schedule_message(settings: Settings, body: dict[str, Any]) -> Schedul
             reply_text="好的，我先暂停每日自动推送。之后如果你想恢复，直接发“每天早上 8 点推送日报”之类的话就行。",
         )
 
-    if compiled.schedules or compiled.enabled is True:
+    if compiled.schedules or compiled.one_off_runs or compiled.enabled is True:
         preferences.enabled = True if compiled.enabled is None else compiled.enabled
         if compiled.schedules:
             preferences.schedules = compiled.schedules
             preferences.daily_time = compiled.schedules[0].time
+        if compiled.one_off_runs:
+            preferences.one_off_runs = _merge_one_off_runs(preferences.one_off_runs, compiled.one_off_runs)
         preferences.timezone = settings.timezone
         if chat_id:
             preferences.target_type = "chat_id"
@@ -180,6 +187,12 @@ def _looks_like_generate_now_text(text: str) -> bool:
 def _looks_like_schedule_request(text: str) -> bool:
     lowered = normalize_text(text)
     schedule_markers = [
+        "今天",
+        "明天",
+        "后天",
+        "这周",
+        "本周",
+        "下周",
         "每天",
         "每日",
         "工作日",
@@ -239,10 +252,30 @@ def _parse_daily_time(text: str) -> Optional[str]:
     return _format_time(hour, minute)
 
 
+def _parse_one_off_runs(text: str, timezone_name: str) -> list[OneOffDeliveryRun]:
+    lowered = normalize_text(text)
+    if not any(marker in lowered for marker in ["推送", "日报", "晨报", "晚报", "发", "固定住"]):
+        return []
+
+    runs: list[OneOffDeliveryRun] = []
+    base_date = utcnow().astimezone(ZoneInfo(timezone_name)).date()
+    segments = [segment.strip() for segment in re.split(r"[，,。；;]\s*", text) if segment.strip()]
+    if not segments:
+        segments = [text]
+
+    for segment in segments:
+        run = _parse_one_off_run_segment(segment, base_date)
+        if run and not _one_off_run_exists(runs, run):
+            runs.append(run)
+
+    return runs
+
+
 def _parse_schedules(text: str) -> list[DeliverySchedule]:
     lowered = normalize_text(text)
     if not any(marker in lowered for marker in ["推送", "日报", "晨报", "晚报", "发", "固定住"]):
         return []
+    contains_one_off_segment = any(_looks_like_one_off_segment(segment) for segment in re.split(r"[，,。；;]\s*", text) if segment.strip())
 
     schedules: list[DeliverySchedule] = []
     segments = [segment.strip() for segment in re.split(r"[，,。；;]\s*", text) if segment.strip()]
@@ -257,13 +290,28 @@ def _parse_schedules(text: str) -> list[DeliverySchedule]:
     if schedules:
         return schedules
 
+    if contains_one_off_segment:
+        return []
+
     fallback_time = _parse_daily_time(text)
     if fallback_time:
         return [DeliverySchedule(days=list(DAY_CODES), time=fallback_time)]
     return []
 
 
+def _parse_one_off_run_segment(text: str, base_date) -> Optional[OneOffDeliveryRun]:
+    if not _looks_like_one_off_segment(text):
+        return None
+    schedule_time = _parse_daily_time(text)
+    schedule_date = _parse_one_off_date(text, base_date)
+    if not schedule_time or not schedule_date:
+        return None
+    return OneOffDeliveryRun(date=schedule_date.isoformat(), time=schedule_time)
+
+
 def _parse_schedule_segment(text: str) -> Optional[DeliverySchedule]:
+    if _looks_like_one_off_segment(text):
+        return None
     schedule_time = _parse_daily_time(text)
     if not schedule_time:
         return None
@@ -296,11 +344,87 @@ def _parse_days(text: str) -> list[str]:
     return days
 
 
+def _parse_one_off_date(text: str, base_date):
+    lowered = normalize_text(text)
+    if "明天" in lowered:
+        return base_date + timedelta(days=1)
+    if "后天" in lowered:
+        return base_date + timedelta(days=2)
+    if any(marker in lowered for marker in ["今天", "今日"]):
+        return base_date
+
+    weekday_index = _extract_weekday_index(lowered)
+    if weekday_index is None:
+        return None
+    base_weekday = base_date.weekday()
+    if any(marker in lowered for marker in ["下周", "下星期", "下礼拜"]):
+        return base_date + timedelta(days=(7 - base_weekday) + weekday_index)
+    if any(marker in lowered for marker in ["这周", "本周", "这星期", "本星期", "这礼拜", "本礼拜"]):
+        delta = weekday_index - base_weekday
+        if delta < 0:
+            delta += 7
+        return base_date + timedelta(days=delta)
+    return None
+
+
+def _extract_weekday_index(text: str) -> Optional[int]:
+    day_markers = [
+        (0, ["周一", "星期一", "礼拜一"]),
+        (1, ["周二", "星期二", "礼拜二"]),
+        (2, ["周三", "星期三", "礼拜三"]),
+        (3, ["周四", "星期四", "礼拜四"]),
+        (4, ["周五", "星期五", "礼拜五"]),
+        (5, ["周六", "星期六", "礼拜六"]),
+        (6, ["周日", "周天", "星期日", "星期天", "礼拜日", "礼拜天"]),
+    ]
+    for index, markers in day_markers:
+        if any(marker in text for marker in markers):
+            return index
+    return None
+
+
+def _looks_like_one_off_segment(text: str) -> bool:
+    lowered = normalize_text(text)
+    one_off_markers = [
+        "今天",
+        "今日",
+        "明天",
+        "后天",
+        "这周",
+        "本周",
+        "下周",
+        "这星期",
+        "本星期",
+        "下星期",
+        "这礼拜",
+        "本礼拜",
+        "下礼拜",
+        "一次性",
+        "单次",
+        "只发一次",
+        "就这一次",
+        "仅此一次",
+    ]
+    return any(marker in lowered for marker in one_off_markers)
+
+
 def _schedule_exists(schedules: list[DeliverySchedule], candidate: DeliverySchedule) -> bool:
     for schedule in schedules:
         if schedule.time == candidate.time and schedule.days == candidate.days:
             return True
     return False
+
+
+def _one_off_run_exists(runs: list[OneOffDeliveryRun], candidate: OneOffDeliveryRun) -> bool:
+    return any(run.date == candidate.date and run.time == candidate.time for run in runs)
+
+
+def _merge_one_off_runs(existing: list[OneOffDeliveryRun], incoming: list[OneOffDeliveryRun]) -> list[OneOffDeliveryRun]:
+    merged = list(existing)
+    for run in incoming:
+        if not _one_off_run_exists(merged, run):
+            merged.append(run)
+    return sorted(merged, key=lambda run: (run.date, run.time))
 
 
 def _format_time(hour: int, minute: int) -> Optional[str]:
@@ -320,9 +444,20 @@ def _compile_delivery_request(
         return CompiledDeliveryRequest(generate_now=True, rationale="命中立即生成日报规则。")
     if _is_disable_schedule_request(text):
         return CompiledDeliveryRequest(enabled=False, rationale="命中暂停推送规则。")
+    one_off_runs = _parse_one_off_runs(text, settings.timezone)
     schedules = _parse_schedules(text)
-    if schedules:
-        return CompiledDeliveryRequest(enabled=True, schedules=schedules, rationale="命中时间解析规则。")
+    if one_off_runs or schedules:
+        rationale_parts = []
+        if schedules:
+            rationale_parts.append("命中周期时间解析规则")
+        if one_off_runs:
+            rationale_parts.append("命中单次推送时间解析规则")
+        return CompiledDeliveryRequest(
+            enabled=True,
+            schedules=schedules,
+            one_off_runs=one_off_runs,
+            rationale="；".join(rationale_parts) + "。",
+        )
     if _is_enable_schedule_request(text):
         return CompiledDeliveryRequest(enabled=True, rationale="命中恢复推送规则。")
     if settings.has_openai:
@@ -342,23 +477,26 @@ def _compile_delivery_request_with_llm(
     url = settings.openai_base_url.rstrip("/") + "/chat/completions"
     prompt = (
         "你是 Agent 运行配置编译器。把用户的自然语言需求翻译成 JSON。"
-        "只输出 JSON，字段只能使用：generate_now, show_schedule, enabled, schedules, rationale。"
+        "只输出 JSON，字段只能使用：generate_now, show_schedule, enabled, schedules, one_off_runs, rationale。"
         "generate_now/show_schedule 必须是布尔值。enabled 只能是 true/false/null。"
         "schedules 必须是数组，元素字段只能是 days 和 time。"
+        "one_off_runs 必须是数组，元素字段只能是 date 和 time；date 使用 YYYY-MM-DD。"
         "days 只能使用 mon,tue,wed,thu,fri,sat,sun；time 只能是 HH:MM。"
-        "如果用户只是想立刻生成一版日报，不要修改 enabled 和 schedules。"
-        "如果用户只是想查看当前推送设置，不要修改 enabled 和 schedules。"
+        "如果用户说的是今天、明天、后天、本周几、下周几或只发一次，请优先写入 one_off_runs，不要写 schedules。"
+        "如果用户只是想立刻生成一版日报，不要修改 enabled、schedules 和 one_off_runs。"
+        "如果用户只是想查看当前推送设置，不要修改 enabled、schedules 和 one_off_runs。"
         "如果用户没有明确表达调度诉求，就把所有字段置为空或 false。"
     )
     payload = {
         "user_text": text,
         "current_delivery_preferences": {
             "enabled": preferences.enabled,
-            "daily_time": preferences.daily_time,
-            "schedules": [{"days": schedule.days, "time": schedule.time} for schedule in preferences.schedules],
-            "timezone": preferences.timezone,
-        },
-        "timezone": settings.timezone,
+                "daily_time": preferences.daily_time,
+                "schedules": [{"days": schedule.days, "time": schedule.time} for schedule in preferences.schedules],
+                "one_off_runs": [{"date": run.date, "time": run.time} for run in preferences.one_off_runs],
+                "timezone": preferences.timezone,
+            },
+            "timezone": settings.timezone,
     }
     response = session.post(
         url,
@@ -385,6 +523,7 @@ def _compile_delivery_request_with_llm(
         show_schedule=bool(raw.get("show_schedule", False)),
         enabled=_coerce_optional_bool(raw.get("enabled")),
         schedules=_coerce_schedules(raw.get("schedules")),
+        one_off_runs=_coerce_one_off_runs(raw.get("one_off_runs")),
         rationale=str(raw.get("rationale") or "").strip(),
     )
 
@@ -426,6 +565,23 @@ def _coerce_schedules(value: object) -> list[DeliverySchedule]:
     return schedules
 
 
+def _coerce_one_off_runs(value: object) -> list[OneOffDeliveryRun]:
+    if not isinstance(value, list):
+        return []
+    runs: list[OneOffDeliveryRun] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        date = str(item.get("date") or "").strip()
+        time = _coerce_time_string(item.get("time"))
+        if not _looks_like_iso_date(date) or not time:
+            continue
+        candidate = OneOffDeliveryRun(date=date, time=time)
+        if not _one_off_run_exists(runs, candidate):
+            runs.append(candidate)
+    return sorted(runs, key=lambda run: (run.date, run.time))
+
+
 def _coerce_days(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -435,6 +591,10 @@ def _coerce_days(value: object) -> list[str]:
         if label in DAY_CODES and label not in days:
             days.append(label)
     return days
+
+
+def _looks_like_iso_date(value: str) -> bool:
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value))
 
 
 def _extract_sender_type(body: dict[str, Any]) -> str:

@@ -105,14 +105,19 @@ def run(settings: Settings) -> Dict[str, object]:
 
     notifier = FeishuNotifier(settings)
     delivery = notifier.send(brief)
-    repo.save_brief(
-        brief_date=brief_date,
-        markdown_path=str(markdown_path),
-        item_ids=[item.item_id for item in final_selected if item.item_id is not None],
-        sent_via=delivery.channel,
-        sent_status=delivery.status,
-        message_id=delivery.message_id,
-    )
+    brief_saved = True
+    try:
+        repo.save_brief(
+            brief_date=brief_date,
+            markdown_path=str(markdown_path),
+            item_ids=[item.item_id for item in final_selected if item.item_id is not None],
+            sent_via=delivery.channel,
+            sent_status=delivery.status,
+            message_id=delivery.message_id,
+        )
+    except Exception:
+        brief_saved = False
+        LOGGER.exception("日报已经发送，但写入 briefs 表失败。为避免重复推送，这次不会把投递视为失败。")
 
     result = {
         "brief_date": brief_date,
@@ -122,6 +127,7 @@ def run(settings: Settings) -> Dict[str, object]:
         "selected_count": len(final_selected),
         "delivery_channel": delivery.channel,
         "delivery_status": delivery.status,
+        "brief_saved": brief_saved,
         "used_fallback_lookback": used_fallback,
     }
     LOGGER.info("run completed: %s", result)

@@ -127,15 +127,11 @@ def render_markdown(
             lines.append("**Why selected**：{0}".format(entry.why_selected))
             lines.append("**来源**：[{0}]({1})".format(entry.source_name, entry.source_url))
             lines.append("**标签**：{0}".format(" / ".join(entry.tags)))
-            lines.append("**反馈**：👍 useful (`item_id={0}`) | 👎 dislike (`item_id={0}`)".format(entry.item_id))
+            lines.append("**反馈动作**：👍 有用 | 👎 不想看")
             lines.append("")
         lines.append("---")
         lines.append("")
 
-    lines.append("## 使用说明")
-    lines.append("- 飞书卡片按钮会直接回调反馈服务。")
-    lines.append("- 本地调试可以 `POST /feishu/callback`，body 只需带 `item_id` 和 `label`。")
-    lines.append("")
     return "\n".join(lines)
 
 

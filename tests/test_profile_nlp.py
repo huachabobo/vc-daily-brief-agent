@@ -40,3 +40,21 @@ def test_preference_compiler_heuristics_extracts_freeform_preferred_keywords(tmp
     assert "客户验证" in compiled.patch.add_preferred_keywords
     assert "商业化落地" in compiled.patch.add_preferred_keywords
     assert "供应链" in compiled.patch.add_preferred_keywords
+
+
+def test_preference_compiler_filters_generic_preferred_keywords(tmp_path):
+    settings = Settings.from_env(tmp_path)
+    settings.openai_api_key = ""
+    compiler = PreferenceCompiler(settings)
+
+    compiled = compiler.compile(
+        "我想多看 OpenAI 的时事动向和供应链。",
+        current_profile=UserProfile(),
+        available_topics=["AI", "芯片", "机器人"],
+        available_sources=["NVIDIA", "SemiEngineering", "The Robot Report"],
+    )
+
+    assert compiled.mode == "heuristic"
+    assert "OpenAI" in compiled.patch.add_preferred_keywords
+    assert "供应链" in compiled.patch.add_preferred_keywords
+    assert "时事动向" not in compiled.patch.add_preferred_keywords

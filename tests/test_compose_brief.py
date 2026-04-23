@@ -46,6 +46,9 @@ def test_compose_brief_groups_topics_and_limits_items():
     assert "## 机器人" in brief.markdown
     assert "## 今日变化" in brief.markdown
     assert "**Why selected**" in brief.markdown
+    assert "**反馈动作**" in brief.markdown
+    assert "item_id=" not in brief.markdown
+    assert "## 使用说明" not in brief.markdown
     assert len(brief.highlights) == 3
 
 

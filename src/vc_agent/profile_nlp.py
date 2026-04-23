@@ -21,6 +21,21 @@ TOPIC_ALIASES = {
     "机器人": ["机器人", "具身", "humanoid", "robot", "robotics", "automation", "人形机器人"],
 }
 
+GENERIC_KEYWORD_SUFFIXES = ["时事动向", "最新动态", "动态", "相关新闻", "新闻", "资讯", "消息", "热点", "趋势"]
+GENERIC_KEYWORDS = {
+    "时事动向",
+    "最新动态",
+    "动态",
+    "新闻",
+    "资讯",
+    "消息",
+    "热点",
+    "趋势",
+    "行业动态",
+    "行业新闻",
+    "行业资讯",
+}
+
 
 @dataclass
 class CompiledPreference:
@@ -197,12 +212,12 @@ def _sanitize_patch(payload: Dict[str, object], available_topics: List[str], ava
         remove_blocked_topics=_map_labels(payload.get("remove_blocked_topics"), topic_lookup),
         add_preferred_sources=_map_labels(payload.get("add_preferred_sources"), source_lookup),
         remove_preferred_sources=_map_labels(payload.get("remove_preferred_sources"), source_lookup),
-        add_preferred_keywords=_coerce_str_list(payload.get("add_preferred_keywords")),
-        remove_preferred_keywords=_coerce_str_list(payload.get("remove_preferred_keywords")),
+        add_preferred_keywords=_sanitize_keyword_list(payload.get("add_preferred_keywords")),
+        remove_preferred_keywords=_sanitize_keyword_list(payload.get("remove_preferred_keywords")),
         add_blocked_sources=_map_labels(payload.get("add_blocked_sources"), source_lookup),
         remove_blocked_sources=_map_labels(payload.get("remove_blocked_sources"), source_lookup),
-        add_blocked_keywords=_coerce_str_list(payload.get("add_blocked_keywords")),
-        remove_blocked_keywords=_coerce_str_list(payload.get("remove_blocked_keywords")),
+        add_blocked_keywords=_sanitize_keyword_list(payload.get("add_blocked_keywords")),
+        remove_blocked_keywords=_sanitize_keyword_list(payload.get("remove_blocked_keywords")),
         topic_weight_overrides=_sanitize_weight_map(payload.get("topic_weight_overrides"), topic_lookup),
         source_weight_overrides=_sanitize_weight_map(payload.get("source_weight_overrides"), source_lookup),
         keyword_weight_overrides=_sanitize_free_weight_map(payload.get("keyword_weight_overrides")),
@@ -254,7 +269,7 @@ def _sanitize_free_weight_map(raw_value: object) -> Dict[str, float]:
         return {}
     cleaned: Dict[str, float] = {}
     for key, value in raw_value.items():
-        label = str(key).strip()
+        label = _normalize_freeform_keyword(str(key))
         if not label:
             continue
         clipped = _clip_weight(value)
@@ -283,7 +298,35 @@ def _extract_keyword_chunks(text: str, markers: tuple[str, ...]) -> List[str]:
 def _split_keywords(raw: str) -> List[str]:
     values = []
     for part in re.split(r"[、/,，；;和及 ]+", raw):
-        text = part.strip()
+        text = _normalize_freeform_keyword(part)
         if len(text) >= 2 and text not in values:
             values.append(text)
     return values[:5]
+
+
+def _sanitize_keyword_list(raw_value: object) -> List[str]:
+    values = []
+    for item in _coerce_str_list(raw_value):
+        normalized = _normalize_freeform_keyword(item)
+        if normalized and normalized not in values:
+            values.append(normalized)
+    return values
+
+
+def _normalize_freeform_keyword(value: str) -> str:
+    text = str(value).strip().strip("，。；;、 ")
+    if not text:
+        return ""
+    for suffix in GENERIC_KEYWORD_SUFFIXES:
+        pattern = r"(.+?)(?:的)?{0}$".format(re.escape(suffix))
+        match = re.fullmatch(pattern, text)
+        if match:
+            candidate = match.group(1).strip()
+            if len(candidate) >= 2:
+                text = candidate
+            else:
+                text = suffix
+            break
+    if text in GENERIC_KEYWORDS:
+        return ""
+    return text

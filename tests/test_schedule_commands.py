@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
+import vc_agent.feedback.schedule_commands as schedule_commands
 from vc_agent.delivery_preferences import load_delivery_preferences, render_delivery_preferences
 from vc_agent.feedback.schedule_commands import (
     handle_schedule_message,
@@ -67,6 +69,62 @@ def test_schedule_message_supports_weekday_and_weekend_rules(tmp_path):
     assert preferences.schedules[1].time == "10:30"
     assert "工作日 09:00" in render_delivery_preferences(preferences)
     assert "周末 10:30" in render_delivery_preferences(preferences)
+
+
+def test_schedule_message_supports_one_off_tomorrow_runs(monkeypatch, tmp_path):
+    settings = _settings(Path(tmp_path))
+    monkeypatch.setattr(
+        schedule_commands,
+        "utcnow",
+        lambda: datetime(2026, 4, 23, 11, 0, tzinfo=timezone.utc),
+    )
+
+    result = handle_schedule_message(settings, _make_body("明天 10 点钟给我推送日报"))
+
+    assert result.handled is True
+    assert "2026-04-24 10:00" in result.reply_text
+    preferences = load_delivery_preferences(settings.delivery_preferences_path, settings.timezone)
+    assert preferences.schedules == []
+    assert len(preferences.one_off_runs) == 1
+    assert preferences.one_off_runs[0].date == "2026-04-24"
+    assert preferences.one_off_runs[0].time == "10:00"
+
+
+def test_schedule_message_can_combine_one_off_and_recurring_rules(monkeypatch, tmp_path):
+    settings = _settings(Path(tmp_path))
+    monkeypatch.setattr(
+        schedule_commands,
+        "utcnow",
+        lambda: datetime(2026, 4, 23, 11, 0, tzinfo=timezone.utc),
+    )
+
+    result = handle_schedule_message(settings, _make_body("明天 10 点给我推送日报，以后每天 9 点推送"))
+
+    assert result.handled is True
+    preferences = load_delivery_preferences(settings.delivery_preferences_path, settings.timezone)
+    assert len(preferences.one_off_runs) == 1
+    assert preferences.one_off_runs[0].date == "2026-04-24"
+    assert preferences.one_off_runs[0].time == "10:00"
+    assert len(preferences.schedules) == 1
+    assert preferences.schedules[0].days == ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    assert preferences.schedules[0].time == "09:00"
+
+
+def test_schedule_message_understands_next_week_weekday(monkeypatch, tmp_path):
+    settings = _settings(Path(tmp_path))
+    monkeypatch.setattr(
+        schedule_commands,
+        "utcnow",
+        lambda: datetime(2026, 4, 21, 11, 0, tzinfo=timezone.utc),
+    )
+
+    result = handle_schedule_message(settings, _make_body("下周一 10 点给我推送日报"))
+
+    assert result.handled is True
+    assert "2026-04-27 10:00" in result.reply_text
+    preferences = load_delivery_preferences(settings.delivery_preferences_path, settings.timezone)
+    assert preferences.one_off_runs[0].date == "2026-04-27"
+    assert preferences.one_off_runs[0].time == "10:00"
 
 
 def test_schedule_message_can_disable_push(tmp_path):

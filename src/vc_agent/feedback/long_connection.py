@@ -25,6 +25,7 @@ from vc_agent.feedback.processing import (
 from vc_agent.pipeline.run_once import run
 from vc_agent.settings import Settings
 from vc_agent.storage import Repository
+from vc_agent.user_runtime import settings_for_user
 
 
 LOGGER = logging.getLogger(__name__)
@@ -66,18 +67,19 @@ def serve_long_connection(settings: Settings) -> None:
             "长连接模式需要安装 `lark-oapi`。请执行 `uv pip install -r requirements.txt`。"
         ) from exc
 
-    repo = Repository(settings.db_path)
-    repo.init_db()
     notifier = FeishuNotifier(settings)
     message_deduper = RecentMessageDeduper()
 
     def do_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
         body = json.loads(lark.JSON.marshal(data))
         LOGGER.info("收到飞书长连接卡片交互回调。")
+        operator_open_id = _extract_operator_open_id(body)
+        scoped_settings = settings_for_user(settings, operator_open_id or _extract_chat_id(body) or "default")
+        repo = Repository(scoped_settings.db_path)
+        repo.init_db()
         if _has_preference_assistant_action(body):
             try:
-                result = handle_preference_card_action(settings, body)
-                operator_open_id = _extract_operator_open_id(body)
+                result = handle_preference_card_action(scoped_settings, body)
                 if result.reply_text and operator_open_id:
                     notifier.send_text_message("open_id", operator_open_id, result.reply_text)
                 return P2CardActionTriggerResponse(
@@ -200,6 +202,13 @@ def _extract_operator_open_id(body: dict[str, Any]) -> str:
     return str(body.get("event", {}).get("operator", {}).get("open_id") or "")
 
 
+def _extract_sender_open_id(body: dict[str, Any]) -> str:
+    sender_id = body.get("event", {}).get("sender", {}).get("sender_id", {})
+    if not isinstance(sender_id, dict):
+        return ""
+    return str(sender_id.get("open_id") or "")
+
+
 def _has_preference_assistant_action(body: dict[str, Any]) -> bool:
     value = body.get("event", {}).get("action", {}).get("value", {})
     if not isinstance(value, dict):
@@ -224,9 +233,11 @@ def _extract_text_message(body: dict[str, Any]) -> str:
 
 def _process_message_event(settings: Settings, notifier: FeishuNotifier, body: dict[str, Any]) -> None:
     try:
+        user_key = _extract_sender_open_id(body) or _extract_chat_id(body) or "default"
+        scoped_settings = settings_for_user(settings, user_key)
         chat_id = _extract_chat_id(body)
         text_message = _extract_text_message(body)
-        agent_result = handle_message_with_intent_agent(settings, body)
+        agent_result = handle_message_with_intent_agent(scoped_settings, body)
         if agent_result.handled:
             if not chat_id:
                 LOGGER.warning("飞书消息缺少 chat_id，无法回复 Agent 调度结果。body=%s", body)
@@ -237,12 +248,12 @@ def _process_message_event(settings: Settings, notifier: FeishuNotifier, body: d
             if agent_result.reply_card:
                 notifier.send_interactive_message("chat_id", chat_id, agent_result.reply_card)
             if agent_result.trigger_generate_now:
-                _handle_generate_now_request(settings, notifier, chat_id)
+                _handle_generate_now_request(scoped_settings, notifier, chat_id)
             return
-        schedule_result = handle_schedule_message(settings, body)
+        schedule_result = handle_schedule_message(scoped_settings, body)
         if schedule_result.handled:
             if schedule_result.trigger_generate_now:
-                _handle_generate_now_request(settings, notifier, chat_id)
+                _handle_generate_now_request(scoped_settings, notifier, chat_id)
                 return
             if not chat_id:
                 LOGGER.warning("飞书消息缺少 chat_id，无法回复调度设置。body=%s", body)
@@ -250,7 +261,7 @@ def _process_message_event(settings: Settings, notifier: FeishuNotifier, body: d
             notifier.send_text_message("chat_id", chat_id, schedule_result.reply_text)
             if not looks_like_preference_followup(text_message):
                 return
-        result = handle_preference_message(settings, body)
+        result = handle_preference_message(scoped_settings, body)
         if not result.should_reply:
             return
         if not chat_id:
