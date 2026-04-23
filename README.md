@@ -21,6 +21,7 @@
 - `多真实源`：当前同时接入 `YouTube` 与 `RSS/Atom`，避免只靠单一平台
 - `飞书反馈学习`：用户点击 `👍 / 👎` 后，source/topic/phrase 权重会影响下一轮排序
 - `显式用户画像`：可以在 `config/user_profile.yaml` 里直接声明重点赛道、偏好来源和屏蔽条件
+- `自然语言偏好`：可以像 ChatGPT Pulse 一样直接描述“多看什么 / 少看什么 / 简报几条”，AI 会把它编译成结构化画像 patch
 - `轻量配置向导`：`python scripts/bootstrap.py` 可以在终端里生成 `.env`，不需要额外做 WebUI
 
 ## 交付物
@@ -121,8 +122,21 @@ python scripts/bootstrap.py
 - `preferred_sources`
 - `blocked_sources`
 - `blocked_keywords`
+- `weight_overrides.topics / sources / keywords`
 - `digest.max_items`
 - `digest.exploration_slots`
+
+也可以直接用自然语言更新画像：
+
+```bash
+python scripts/update_profile.py --text "我更关注 AI infra 和机器人商业化落地，优先 NVIDIA、SemiEngineering，少给我纯学术 benchmark，日报控制在 5 条。"
+```
+
+如果想先看 AI 会怎么改，不立刻写入文件：
+
+```bash
+python scripts/update_profile.py --text "更关注芯片和机器人，少看 benchmark" --dry-run
+```
 
 ## 运行
 

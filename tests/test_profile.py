@@ -5,7 +5,11 @@ from vc_agent.profile import (
     UserProfile,
     apply_profile_adjustments,
     item_allowed,
+    merge_profile_patch,
     resolve_digest_settings,
+    save_user_profile,
+    load_user_profile,
+    UserProfilePatch,
 )
 from vc_agent.utils.time import utcnow
 
@@ -53,9 +57,73 @@ def test_profile_adjustment_boosts_focus_topic_and_preferred_source():
     assert "用户偏好来源" in updated.reasons
 
 
+def test_profile_adjustment_supports_explicit_weight_overrides():
+    profile = UserProfile(
+        topic_weight_overrides={"芯片": 0.12},
+        source_weight_overrides={"NVIDIA": 0.15},
+        keyword_weight_overrides={"benchmark": -0.08},
+    )
+    item = make_item()
+
+    updated = apply_profile_adjustments(item, profile)
+
+    assert updated.score > 1.0
+    assert any("用户主题权重" in reason for reason in updated.reasons)
+    assert any("用户来源权重" in reason for reason in updated.reasons)
+    assert any("用户关键词权重" in reason for reason in updated.reasons)
+
+
 def test_profile_digest_overrides_defaults():
     profile = UserProfile(max_brief_items=8, exploration_slots=2)
 
     resolved = resolve_digest_settings(6, 1, profile)
 
     assert resolved == {"max_items": 8, "exploration_slots": 2}
+
+
+def test_merge_profile_patch_updates_lists_and_weights():
+    profile = UserProfile(
+        focus_topics=["AI"],
+        preferred_sources=["NVIDIA"],
+        keyword_weight_overrides={"benchmark": -0.08},
+        max_brief_items=6,
+        exploration_slots=1,
+    )
+    patch = UserProfilePatch(
+        add_focus_topics=["机器人"],
+        add_preferred_sources=["SemiEngineering"],
+        topic_weight_overrides={"机器人": 0.11},
+        source_weight_overrides={"SemiEngineering": 0.12},
+        keyword_weight_overrides={"academic": -0.1, "benchmark": 0.0},
+        max_brief_items=5,
+    )
+
+    merged = merge_profile_patch(profile, patch)
+
+    assert merged.focus_topics == ["AI", "机器人"]
+    assert merged.preferred_sources == ["NVIDIA", "SemiEngineering"]
+    assert merged.topic_weight_overrides["机器人"] == 0.11
+    assert merged.source_weight_overrides["SemiEngineering"] == 0.12
+    assert "benchmark" not in merged.keyword_weight_overrides
+    assert merged.max_brief_items == 5
+
+
+def test_save_and_load_profile_preserves_weight_overrides(tmp_path):
+    path = tmp_path / "user_profile.yaml"
+    profile = UserProfile(
+        focus_topics=["AI"],
+        topic_weight_overrides={"AI": 0.09},
+        source_weight_overrides={"NVIDIA": 0.12},
+        keyword_weight_overrides={"benchmark": -0.08},
+        max_brief_items=5,
+        exploration_slots=1,
+    )
+
+    save_user_profile(path, profile)
+    loaded = load_user_profile(path)
+
+    assert loaded.focus_topics == ["AI"]
+    assert loaded.topic_weight_overrides == {"AI": 0.09}
+    assert loaded.source_weight_overrides == {"NVIDIA": 0.12}
+    assert loaded.keyword_weight_overrides == {"benchmark": -0.08}
+    assert loaded.max_brief_items == 5
