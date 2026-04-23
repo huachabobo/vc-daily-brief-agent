@@ -84,3 +84,18 @@ def test_intent_agent_can_trigger_generate_now(monkeypatch, tmp_path):
     assert result.handled is True
     assert result.trigger_generate_now is True
     assert result.reply_card is None
+
+
+def test_intent_agent_can_reply_to_general_chat(monkeypatch, tmp_path):
+    settings = _setup_repo(Path(tmp_path))
+    settings.openai_api_key = ""
+    monkeypatch.setattr(
+        "vc_agent.feedback.intent_agent._plan_tools",
+        lambda settings, text: [],
+    )
+
+    result = handle_message_with_intent_agent(settings, _make_body("你好 你是什么 AI"))
+
+    assert result.handled is True
+    assert len(result.reply_texts) == 1
+    assert "VC Daily Brief" in result.reply_texts[0] or "助手" in result.reply_texts[0]

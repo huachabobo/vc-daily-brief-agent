@@ -33,6 +33,9 @@ def handle_message_with_intent_agent(settings: Settings, body: dict[str, Any]) -
 
     planned_tools = _plan_tools(settings, text)
     if not planned_tools:
+        chat_reply = _reply_to_general_chat(settings, text)
+        if chat_reply:
+            return IntentAgentExecution(handled=True, reply_texts=[chat_reply])
         return IntentAgentExecution()
 
     execution = IntentAgentExecution(handled=True)
@@ -168,6 +171,50 @@ def _summarize_execution(settings: Settings, user_text: str, notes: list[str]) -
     payload = response.json()
     message = payload["choices"][0]["message"]["content"].strip()
     return compact_sentence(message or fallback, limit=120)
+
+
+def _reply_to_general_chat(settings: Settings, text: str) -> str:
+    fallback = _fallback_chat_reply(text)
+    if not settings.has_openai:
+        return fallback
+    session = requests.Session()
+    url = settings.openai_base_url.rstrip("/") + "/chat/completions"
+    response = session.post(
+        url,
+        headers={
+            "Authorization": "Bearer {0}".format(settings.openai_api_key),
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": settings.openai_model,
+            "temperature": 0.4,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是飞书里的 VC Daily Brief Agent。"
+                        "当用户只是聊天、问你是谁、问你能做什么时，请自然地用中文回复。"
+                        "语气友好、简洁，80字以内；如果合适，顺带说明你能帮他调推送时间、改内容偏好、立即生成日报。"
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    message = payload["choices"][0]["message"]["content"].strip()
+    return compact_sentence(message or fallback, limit=120)
+
+
+def _fallback_chat_reply(text: str) -> str:
+    lowered = normalize_text(text)
+    if any(marker in lowered for marker in ["你是谁", "你是什么", "what are you", "who are you"]):
+        return "我是你的 VC Daily Brief 助手，能帮你调推送时间、改内容偏好，也能立刻生成一版日报。"
+    if any(marker in lowered for marker in ["能做什么", "可以做什么", "help", "帮助"]):
+        return "我可以帮你改日报推送时间、调整关注方向和条数，还能马上生成并发送一版最新日报。"
+    return "我在，除了聊天，也能帮你改推送时间、调内容偏好，或者现在就生成一版日报。"
 
 
 def _extract_text_message(body: dict[str, Any]) -> str:

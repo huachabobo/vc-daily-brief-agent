@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import threading
 import json
 import logging
@@ -29,6 +30,26 @@ from vc_agent.storage import Repository
 LOGGER = logging.getLogger(__name__)
 
 
+class RecentMessageDeduper:
+    def __init__(self, ttl_seconds: int = 300):
+        self.ttl_seconds = ttl_seconds
+        self._seen_at: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def should_process(self, message_id: str) -> bool:
+        if not message_id:
+            return True
+        now = time.time()
+        with self._lock:
+            stale_ids = [key for key, seen_at in self._seen_at.items() if now - seen_at > self.ttl_seconds]
+            for key in stale_ids:
+                self._seen_at.pop(key, None)
+            if message_id in self._seen_at:
+                return False
+            self._seen_at[message_id] = now
+            return True
+
+
 def serve_long_connection(settings: Settings) -> None:
     if not settings.feishu_app_id or not settings.feishu_app_secret:
         raise RuntimeError("长连接模式需要 FEISHU_APP_ID 和 FEISHU_APP_SECRET。")
@@ -48,6 +69,7 @@ def serve_long_connection(settings: Settings) -> None:
     repo = Repository(settings.db_path)
     repo.init_db()
     notifier = FeishuNotifier(settings)
+    message_deduper = RecentMessageDeduper()
 
     def do_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
         body = json.loads(lark.JSON.marshal(data))
@@ -114,45 +136,17 @@ def serve_long_connection(settings: Settings) -> None:
         body = json.loads(lark.JSON.marshal(data))
         text = _safe_message_preview(data)
         LOGGER.info("收到飞书消息事件。preview=%s", text)
-        try:
-            chat_id = _extract_chat_id(body)
-            text_message = _extract_text_message(body)
-            agent_result = handle_message_with_intent_agent(settings, body)
-            if agent_result.handled:
-                if not chat_id:
-                    LOGGER.warning("飞书消息缺少 chat_id，无法回复 Agent 调度结果。body=%s", body)
-                    return
-                for reply_text in agent_result.reply_texts:
-                    if reply_text:
-                        notifier.send_text_message("chat_id", chat_id, reply_text)
-                if agent_result.reply_card:
-                    notifier.send_interactive_message("chat_id", chat_id, agent_result.reply_card)
-                if agent_result.trigger_generate_now:
-                    _handle_generate_now_request(settings, notifier, chat_id)
-                return
-            schedule_result = handle_schedule_message(settings, body)
-            if schedule_result.handled:
-                if schedule_result.trigger_generate_now:
-                    _handle_generate_now_request(settings, notifier, chat_id)
-                    return
-                if not chat_id:
-                    LOGGER.warning("飞书消息缺少 chat_id，无法回复调度设置。body=%s", body)
-                    return
-                notifier.send_text_message("chat_id", chat_id, schedule_result.reply_text)
-                if not looks_like_preference_followup(text_message):
-                    return
-            result = handle_preference_message(settings, body)
-            if not result.should_reply:
-                return
-            if not chat_id:
-                LOGGER.warning("飞书消息缺少 chat_id，无法回复。body=%s", body)
-                return
-            if result.reply_card:
-                notifier.send_interactive_message("chat_id", chat_id, result.reply_card)
-                return
-            notifier.send_text_message("chat_id", chat_id, result.reply_text)
-        except Exception:
-            LOGGER.exception("飞书长连接处理文本消息失败。")
+        message_id = _extract_message_id(body)
+        if message_id and not message_deduper.should_process(message_id):
+            LOGGER.info("跳过重复飞书消息事件。message_id=%s", message_id)
+            return
+        worker = threading.Thread(
+            target=_process_message_event,
+            args=(settings, notifier, body),
+            name="vc-agent-message-handler",
+            daemon=True,
+        )
+        worker.start()
 
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")
@@ -198,6 +192,10 @@ def _extract_chat_id(body: dict[str, Any]) -> str:
     return str(body.get("event", {}).get("message", {}).get("chat_id") or "")
 
 
+def _extract_message_id(body: dict[str, Any]) -> str:
+    return str(body.get("event", {}).get("message", {}).get("message_id") or "")
+
+
 def _extract_operator_open_id(body: dict[str, Any]) -> str:
     return str(body.get("event", {}).get("operator", {}).get("open_id") or "")
 
@@ -222,6 +220,48 @@ def _extract_text_message(body: dict[str, Any]) -> str:
     except Exception:
         pass
     return str(raw).strip()
+
+
+def _process_message_event(settings: Settings, notifier: FeishuNotifier, body: dict[str, Any]) -> None:
+    try:
+        chat_id = _extract_chat_id(body)
+        text_message = _extract_text_message(body)
+        agent_result = handle_message_with_intent_agent(settings, body)
+        if agent_result.handled:
+            if not chat_id:
+                LOGGER.warning("飞书消息缺少 chat_id，无法回复 Agent 调度结果。body=%s", body)
+                return
+            for reply_text in agent_result.reply_texts:
+                if reply_text:
+                    notifier.send_text_message("chat_id", chat_id, reply_text)
+            if agent_result.reply_card:
+                notifier.send_interactive_message("chat_id", chat_id, agent_result.reply_card)
+            if agent_result.trigger_generate_now:
+                _handle_generate_now_request(settings, notifier, chat_id)
+            return
+        schedule_result = handle_schedule_message(settings, body)
+        if schedule_result.handled:
+            if schedule_result.trigger_generate_now:
+                _handle_generate_now_request(settings, notifier, chat_id)
+                return
+            if not chat_id:
+                LOGGER.warning("飞书消息缺少 chat_id，无法回复调度设置。body=%s", body)
+                return
+            notifier.send_text_message("chat_id", chat_id, schedule_result.reply_text)
+            if not looks_like_preference_followup(text_message):
+                return
+        result = handle_preference_message(settings, body)
+        if not result.should_reply:
+            return
+        if not chat_id:
+            LOGGER.warning("飞书消息缺少 chat_id，无法回复。body=%s", body)
+            return
+        if result.reply_card:
+            notifier.send_interactive_message("chat_id", chat_id, result.reply_card)
+            return
+        notifier.send_text_message("chat_id", chat_id, result.reply_text)
+    except Exception:
+        LOGGER.exception("飞书长连接处理文本消息失败。")
 
 
 def _handle_generate_now_request(settings: Settings, notifier: FeishuNotifier, chat_id: str) -> None:
