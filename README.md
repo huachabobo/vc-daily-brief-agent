@@ -10,6 +10,10 @@
 
 ![Feishu feedback preview](docs/assets/feedback-preview.png)
 
+真实飞书发送截图：
+
+<img src="docs/assets/feishu-real-screenshot.jpg" alt="Real Feishu delivery screenshot" width="420" />
+
 ## 体验亮点
 
 - `今日变化`：日报不会只堆内容，还会总结今天相比常规观察窗口最值得先看的变化
