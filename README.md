@@ -121,6 +121,20 @@ curl -X POST http://127.0.0.1:8787/feishu/callback \
   -d '{"item_id": 1, "label": "useful"}'
 ```
 
+## 7×24 运行建议
+
+原型把“抓取生成”和“反馈接收”拆成两条链路：
+- `python scripts/run_once.py`：适合由 `cron` 或云调度器每天触发一次
+- `python scripts/serve_feedback.py`：适合在演示期或长期服务中常驻运行，用于接收飞书反馈
+
+如果在 macOS/Linux 上做最小部署，可以用 `cron`：
+
+```bash
+0 8 * * * cd /path/to/vc-daily-brief-agent && ./.venv/bin/python scripts/run_once.py >> logs/run_once.log 2>&1
+```
+
+这样可以满足题目中的“7×24 自动运行”要求，同时保持原型结构简单。
+
 ## 飞书接入建议
 
 最推荐的演示路径是：
