@@ -42,6 +42,7 @@ class Settings:
     db_path: Path
     output_dir: Path
     sources_config: Path
+    user_profile_config: Path
     youtube_api_key: str
     openai_api_key: str
     openai_base_url: str
@@ -72,12 +73,14 @@ class Settings:
         db_path = repo_root / os.getenv("DB_PATH", "data/vc_agent.db")
         output_dir = repo_root / os.getenv("OUTPUT_DIR", "sample_output")
         sources_config = repo_root / os.getenv("SOURCES_CONFIG", "config/sources.yaml")
+        user_profile_config = repo_root / os.getenv("USER_PROFILE_CONFIG", "config/user_profile.yaml")
 
         return cls(
             repo_root=repo_root,
             db_path=db_path,
             output_dir=output_dir,
             sources_config=sources_config,
+            user_profile_config=user_profile_config,
             youtube_api_key=os.getenv("YOUTUBE_API_KEY", ""),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
@@ -124,5 +127,6 @@ class Settings:
             "db_path": str(self.db_path),
             "output_dir": str(self.output_dir),
             "sources_config": str(self.sources_config),
+            "user_profile_config": str(self.user_profile_config),
             "timezone": self.timezone,
         }

@@ -11,6 +11,12 @@ from vc_agent.connectors.youtube import YouTubeConnector
 from vc_agent.delivery.feishu import FeishuNotifier
 from vc_agent.domain import Item, SourceConfig
 from vc_agent.llm.client import SummaryClient
+from vc_agent.profile import (
+    apply_profile_adjustments,
+    item_allowed,
+    load_user_profile,
+    resolve_digest_settings,
+)
 from vc_agent.ranking.dedup import deduplicate
 from vc_agent.ranking.rules import build_item, classify_topic, infer_source_topic, suggest_tags
 from vc_agent.settings import Settings
@@ -33,6 +39,7 @@ def run(settings: Settings) -> Dict[str, object]:
     repo.init_db()
 
     sources = load_sources(settings.sources_config)
+    profile = load_user_profile(settings.user_profile_config)
     connector = YouTubeConnector(
         api_key=settings.youtube_api_key,
         max_fetch_per_source=settings.max_fetch_per_source,
@@ -55,22 +62,27 @@ def run(settings: Settings) -> Dict[str, object]:
         repo.upsert_item(item)
 
     candidate_since = fallback_since if used_fallback else primary_since
-    candidates = repo.list_items_since(candidate_since.isoformat())
+    candidates = [item for item in repo.list_items_since(candidate_since.isoformat()) if item_allowed(item, profile)]
     if not candidates:
-        raise RuntimeError("没有可用于生成简报的候选内容，请检查频道配置或 API 权限。")
+        raise RuntimeError("没有可用于生成简报的候选内容，请检查频道配置、用户画像过滤条件或 API 权限。")
 
     preferences = repo.load_preference_state()
+    digest_settings = resolve_digest_settings(
+        default_max_items=settings.max_brief_items,
+        default_exploration_slots=settings.exploration_slots,
+        profile=profile,
+    )
     rescored: List[Item] = []
     for item in candidates:
-        rescored.append(build_item(item, preferences))
+        rescored.append(apply_profile_adjustments(build_item(item, preferences), profile))
     rescored = deduplicate(rescored)
 
     summarizer = SummaryClient(settings)
     selected = select_brief_items(
         rescored,
-        max_items=settings.max_brief_items,
+        max_items=digest_settings["max_items"],
         min_score_threshold=settings.min_score_threshold,
-        exploration_slots=settings.exploration_slots,
+        exploration_slots=digest_settings["exploration_slots"],
     )
     selected_ids = {item.item_id for item in selected}
 

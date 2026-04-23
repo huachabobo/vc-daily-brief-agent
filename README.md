@@ -7,6 +7,7 @@
 - `今日变化`：日报不会只堆内容，还会总结今天相比常规观察窗口最值得先看的变化
 - `Why selected`：每条内容都会说明为什么它被选进今日简报，强化可解释性
 - `飞书反馈学习`：用户点击 `👍 / 👎` 后，source/topic/phrase 权重会影响下一轮排序
+- `显式用户画像`：可以在 `config/user_profile.yaml` 里直接声明重点赛道、偏好来源和屏蔽条件
 - `轻量配置向导`：`python scripts/bootstrap.py` 可以在终端里生成 `.env`，不需要额外做 WebUI
 
 ## 交付物
@@ -96,6 +97,16 @@ python scripts/bootstrap.py
 
 编辑 [config/sources.yaml](config/sources.yaml)，填入 YouTube 频道 `channel_id`，并把 `active` 改成 `true`。
 
+4. 可选：配置用户画像
+
+编辑 [config/user_profile.yaml](config/user_profile.yaml)，可以直接声明：
+- `focus_topics`
+- `preferred_sources`
+- `blocked_sources`
+- `blocked_keywords`
+- `digest.max_items`
+- `digest.exploration_slots`
+
 ## 运行
 
 生成一份日报：
@@ -168,6 +179,7 @@ pytest
 - 规则打分抑制噪音
 - 简报分组与条数控制
 - 反馈回写与偏好更新
+- 用户画像过滤与偏好加权
 
 ## 演示顺序
 

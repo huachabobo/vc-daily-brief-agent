@@ -1,0 +1,18 @@
+focus_topics:
+  - AI
+  - 芯片
+  - 机器人
+
+blocked_topics: []
+
+preferred_sources:
+  - Asianometry
+  - NVIDIA
+
+blocked_sources: []
+
+blocked_keywords: []
+
+digest:
+  max_items: 6
+  exploration_slots: 1
