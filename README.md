@@ -164,7 +164,11 @@ curl -X POST http://127.0.0.1:8787/feishu/callback \
 0 8 * * * cd /path/to/vc-daily-brief-agent && ./.venv/bin/python scripts/run_once.py >> logs/run_once.log 2>&1
 ```
 
-这样可以满足题目中的“7×24 自动运行”要求，同时保持原型结构简单。
+仓库里也提供了最小模板：
+- [ops/cron.example](ops/cron.example)：每天生成简报
+- [ops/serve_feedback.launchd.plist.example](ops/serve_feedback.launchd.plist.example)：macOS 下常驻飞书反馈服务
+
+这样可以把题目中的“7×24 自动运行”要求落到实际配置文件，同时保持原型结构简单。
 
 ## 飞书接入建议
 

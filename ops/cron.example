@@ -1,0 +1,2 @@
+# 每天早上 8:00 生成一份日报
+0 8 * * * cd /path/to/vc-daily-brief-agent && ./.venv/bin/python scripts/run_once.py >> logs/run_once.log 2>&1
